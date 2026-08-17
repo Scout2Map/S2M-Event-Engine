@@ -1,0 +1,2102 @@
+diff -ruN orig-ee/.pytest_cache/.gitignore S2M-Event-Engine/.pytest_cache/.gitignore
+--- orig-ee/.pytest_cache/.gitignore	1970-01-01 00:00:00.000000000 +0000
++++ S2M-Event-Engine/.pytest_cache/.gitignore	2026-08-16 15:43:24.027512025 +0000
+@@ -0,0 +1,2 @@
++# Created by pytest automatically.
++*
+diff -ruN orig-ee/.pytest_cache/CACHEDIR.TAG S2M-Event-Engine/.pytest_cache/CACHEDIR.TAG
+--- orig-ee/.pytest_cache/CACHEDIR.TAG	1970-01-01 00:00:00.000000000 +0000
++++ S2M-Event-Engine/.pytest_cache/CACHEDIR.TAG	2026-08-16 15:43:24.027559898 +0000
+@@ -0,0 +1,4 @@
++Signature: 8a477f597d28d172789f06886806bc55
++# This file is a cache directory tag created by pytest.
++# For information about cache directory tags, see:
++#	https://bford.info/cachedir/spec.html
+diff -ruN orig-ee/.pytest_cache/README.md S2M-Event-Engine/.pytest_cache/README.md
+--- orig-ee/.pytest_cache/README.md	1970-01-01 00:00:00.000000000 +0000
++++ S2M-Event-Engine/.pytest_cache/README.md	2026-08-16 15:43:24.027450021 +0000
+@@ -0,0 +1,8 @@
++# pytest cache directory #
++
++This directory contains data from the pytest's cache plugin,
++which provides the `--lf` and `--ff` options, as well as the `cache` fixture.
++
++**Do not** commit this to version control.
++
++See [the docs](https://docs.pytest.org/en/stable/how-to/cache.html) for more information.
+diff -ruN orig-ee/.pytest_cache/v/cache/nodeids S2M-Event-Engine/.pytest_cache/v/cache/nodeids
+--- orig-ee/.pytest_cache/v/cache/nodeids	1970-01-01 00:00:00.000000000 +0000
++++ S2M-Event-Engine/.pytest_cache/v/cache/nodeids	2026-08-16 16:27:02.908599004 +0000
+@@ -0,0 +1,9 @@
++[
++  "test/test_threshold_db.py::test_all_eight_report_event_types_have_thresholds",
++  "test/test_threshold_db.py::test_comm_lost_threshold_exceeds_degraded",
++  "test/test_threshold_db.py::test_defaults_are_inserted",
++  "test/test_threshold_db.py::test_rotation_difficulty_danger_is_below_warning",
++  "test/test_threshold_db.py::test_set_and_get_roundtrip",
++  "test/test_threshold_db.py::test_unknown_key_returns_none_not_crash",
++  "test/test_threshold_db.py::test_v1_schema_is_migrated_and_values_kept"
++]
+\ No newline at end of file
+diff -ruN orig-ee/CHANGES-event-contract.md S2M-Event-Engine/CHANGES-event-contract.md
+--- orig-ee/CHANGES-event-contract.md	1970-01-01 00:00:00.000000000 +0000
++++ S2M-Event-Engine/CHANGES-event-contract.md	2026-08-16 16:27:57.700858106 +0000
+@@ -0,0 +1,147 @@
++# 이벤트 엔진 계약 정합 변경 요약
++
++커밋 메시지와 PR 설명용 임시 요약이다. 반영 후 삭제해도 된다.
++
++## 호환성 점검 결과
++
++`S2M-MCU-BridgeNode`의 현재 main과 대조한 결과, **메시지 계약 자체는 깨져 있지
++않았다.** `EnvSnapshot`의 필드 정의는 V1.0.0 이후 변경되지 않았고, 이 노드가 읽는
++`temperature_c`, `tvoc_ppb`, `illuminance_lux`, `pm2_5_ug_m3`, 각 `*_valid`,
++`link_ok`가 모두 그대로 존재한다. QoS도 양쪽 RELIABLE/depth 10으로 일치한다.
++
++즉 브리지를 최신으로 올려도 이 패키지는 그대로 동작한다. 실제 문제는 브리지 호환이
++아니라 아래 항목들이었다.
++
++## 수정한 문제
++
++### 1. 임계값 조회가 `None`을 반환하면 콜백이 죽는다
++
++`ThresholdDB.get()`이 미등록 키에 `None`을 돌려주는데 호출부가 곧바로 `>` 비교에
++사용했다. `TypeError`가 발생하면 콜백이 중단되어 이후 센서 입력이 통째로 무시된다.
++내장 기본값 fallback을 추가하고 회귀 테스트를 넣었다.
++
++### 2. 이벤트에 좌표가 없다
++
++프로젝트의 차별점인 "SLAM 좌표 위 이벤트 마커"를 만들 수 없는 상태였다. 페이로드에
++`type`, `value`, `threshold`만 있었다.
++
++`map -> base_link` TF를 조회해 `x`, `y`, `yaw`를 붙인다. 조회 시각은 snapshot 발행
++시각이 아니라 `snapshot.header.stamp - <해당 센서의 age_s>`로 추정한 취득 시각을
++사용한다. 센서마다 캐시 나이가 다르므로 발행 시각을 쓰면 실제 취득 위치보다 뒤의
++위치가 찍힌다. 근거는 `S2M-SBC-Integration`의
++`docs/integration/map-marker-coordinate-design.md`다.
++
++TF를 얻지 못하면 최신 위치로 대체하지 않고 `coordinate_status: "unresolved"`로
++발행한다. 잘못된 좌표에 마커를 찍는 것이 좌표 없는 것보다 나쁘다.
++
++### 3. `/events` 단일 토픽이 없다
++
++React 관제 UI와 최종 보고서는 `/events` 단일 토픽을 전제하는데 `/event/*` 개별
++토픽만 있었다. `/events`를 추가하고 기존 개별 토픽도 같은 페이로드로 유지했다.
++
++### 4. 심각도 단계가 없다
++
++보고서 계약의 `level` 필드가 없었다. `warning` / `danger` 2단계를 도입하고 임계값
++스키마를 `(event_type, level)` 키로 확장했다. 기존 단일 단계 DB는 첫 실행 시 자동
++이관되며 기존 값은 `warning`으로 보존된다.
++
++`/threshold/set`의 `level`은 선택 필드이므로 기존 관제 UI 페이로드는 그대로 동작한다.
++
++### 5. 위험 해제 이벤트가 없다
++
++`raised`만 있고 정상 복귀 시 아무것도 발행하지 않아 UI가 마커를 회수할 수 없고,
++환경 적응 운영 정책이 속도 제한을 해제할 근거도 없었다. `state: "cleared"`를
++추가했다.
++
++센서값이 무효로 바뀐 경우에도 `cleared`를 발행한다. 무효 판정이 위험 해제를 뜻하지는
++않지만, 오래된 마커를 무기한 유지하는 쪽이 더 위험하다.
++
++### 6. `LINK_LOSS`의 의미가 모호하다
++
++`EnvSnapshot.link_ok`는 **Pico 센서 MCU의 시리얼 링크**다. 보고서의 통신 이벤트 2종은
++관제망 기준이고, SBC 저장소는 관제망(`/control/heartbeat`)과 주행 링크
++(`/drive/link_ok`)를 명시적으로 분리해 두었다. 이름만으로 셋이 뒤섞일 위험이 있어
++`SENSOR_LINK_LOSS`로 개명했다. 토픽 이름 `/event/link_loss`는 하위 호환을 위해 유지.
++
++### 7. 패키지 메타데이터가 템플릿 그대로다
++
++`license`, `description`, `maintainer`가 `TODO`였다. SW 저작권 등록과 ESWC 제출에
++그대로 나가면 곤란하므로 Apache-2.0과 실제 정보로 채웠다. `tf2_ros` 의존성도 누락되어
++있어 추가했다.
++
++## 추가한 파일
++
++- `launch/event_engine.launch.py`
++- `config/event_engine.yaml`
++- `test/test_threshold_db.py` — ROS 없이 실행되는 4개 테스트
++
++## 검증
++
++```bash
++python3 -m pytest test/test_threshold_db.py -q
++python3 -m flake8 --max-line-length 99 .
++```
++
++이벤트 판정 상태 전이(정상 -> warning -> danger -> warning -> 해제, 무효 처리,
++TF 실패 시 unresolved)는 ROS를 스텁으로 대체한 오프라인 하네스로 확인했다. 실제 ROS
++그래프, TF, 실센서 동작은 검증하지 않았다.
++
++## 8. 나머지 5종 이벤트 구현
++
++이벤트 발행 책임을 이 노드로 일원화하기로 결정함에 따라 보고서 8종 중 남아 있던
++주행 3종과 통신 2종을 구현했다.
++
++| `type` | 판정 근거 | 게이트 조건 |
++|---|---|---|
++| `ROUGH_TERRAIN` | `/imu/data` accel z의 1초 창 표준편차 | 최소 샘플 수 |
++| `SLIP_SUSPECTED` | `DriveStatus.slip_ratio` | `slip_signal_valid` |
++| `ROTATION_DIFFICULT` | 달성 yaw rate / 지령 각속도 | 지령 각속도, duty, `imu_ok`, `motor_enabled`, estop 해제 |
++| `COMM_DEGRADED` | heartbeat 경과 시간 | heartbeat 1회 이상 수신 |
++| `COMM_LOST` | heartbeat 경과 시간 | 상동, DEGRADED와 상호 배타 |
++
++요철 판정에 표준편차를 쓴 이유는 평균을 제거하면 중력 오프셋이 함께 사라져서, 기울어진
++바닥과 울퉁불퉁한 바닥을 자세 추정 없이 구분할 수 있기 때문이다.
++
++회전 곤란은 게이트 조건이 핵심이다. 정지 상태나 estop 상태에서 "회전하지 않음"은
++당연한 결과이므로 이벤트가 아니다. 실제로 회전을 지령했고, 모터에 duty가 실려 있고,
++IMU가 신뢰 가능할 때만 비율을 평가한다.
++
++`COMM_DEGRADED`와 `COMM_LOST`는 별도 type으로 두었다. 보고서가 2종으로 세고 있고
++운영자의 대응도 다르기 때문이다. 상호 배타적으로 전이하므로 관제 화면에 둘이 동시에
++뜨지 않는다.
++
++### 시간 기반 debounce 도입
++
++모든 이벤트에 `raise_hold_s` / `clear_hold_s`를 적용했다. 임계값을 순간적으로 한 번
++넘은 것만으로는 발행하지 않는다. 가스 센서 노이즈나 단발 충격으로 마커가 생겼다
++사라지는 것을 막는다. 기존 환경 4종에도 함께 적용된다.
++
++### 주행 이벤트는 기본 비활성
++
++`enable_drive_events`의 기본값은 `false`다. `SLIP_SUSPECTED`가 의존하는 브리지의
++`skid_factor`가 아직 측정되지 않은 `1.0`이기 때문이다. 4륜 skid steer에서 이 값을
++보정하지 않으면 의도한 제자리 회전이 전부 슬립으로 잡힌다. 노드 기동 시에도 경고를
++남긴다.
++
++`ros2 run scout2map_bridge skid_calib`으로 측정하고 `gyro_bias_radps`까지 설정한 뒤
++활성화한다.
++
++### return_home과의 책임 분담
++
++`return_home`도 heartbeat를 구독하지만 이는 중복이 아니다. 이벤트 엔진은 마커를
++발행하고, `return_home`은 자동 복귀 또는 안전 정지를 결정한다. 안전 인터록이 이 노드의
++생존에 의존해서는 안 되므로 독립 감시를 유지한다.
++
++다만 timeout이 두 곳에서 관리되므로 이벤트 엔진의 `COMM_DEGRADED` 기본값(1.5초)을
++`return_home`의 `heartbeat_timeout_sec`(3.0초)보다 작게 두었다. 자동 복귀가 걸리기
++전에 운영자가 품질 저하를 먼저 보게 하기 위함이다.
++
++## 남은 작업
++
++- 주행 3종의 임계값은 전부 추정값이다. `skid_calib` 측정과 실차 rosbag으로 재조정해야
++  한다.
++- `COMM_DEGRADED`가 heartbeat 경과 시간만 본다. 수신 간격 분산이나 왕복 지연을 추가
++  지표로 넣는 편이 낫다.
++- 시계열 DB 적재 (Time-Series AI 노드 입력).
++- `map_id` 자동 주입, `unresolved` 이벤트 재처리 경로.
++- `/events`를 받아 주행 속도를 제한하는 환경 적응 운영 정책 노드.
+diff -ruN orig-ee/README.md S2M-Event-Engine/README.md
+--- orig-ee/README.md	2026-08-16 15:46:01.054317460 +0000
++++ S2M-Event-Engine/README.md	2026-08-16 16:27:02.347943121 +0000
+@@ -1,101 +1,203 @@
+ # S2M-Event-Engine
+ 
+-Scout2Map UGV의 센서 데이터를 기반으로 임계값을 판별하고 이벤트를 발생시키는 ROS2 패키지다.
++Scout2Map UGV의 센서 데이터를 기반으로 임계값을 판별하고 이벤트를 발생시키는 ROS2
++패키지다. ROS 패키지 이름은 `scout2map_event`다.
+ 
+-현재는 `S2M-MCU_Bridge_Node`의 `fake_sensors`가 발행하는 `/sensors/env_snapshot`을 구독하여 센서값을 판별하고, 임계값 초과 시 `/event/~` 형식의 토픽을 발행한다.
++**이 노드가 시스템의 유일한 이벤트 발행 주체다.** 지도에 마커를 띄우는 모든 판정은
++여기를 거친다. 임계값, debounce, 심각도 판정이 한곳에 모여 있어야 브리지와 주행 스택,
++관제 UI에 판정 로직이 흩어지지 않는다.
++
++## 입출력
++
++| 방향 | 토픽 | 타입 | 출처 |
++|---|---|---|---|
++| 구독 | `/sensors/env_snapshot` | `scout2map_msgs/EnvSnapshot` | `sensor_bridge` 또는 `fake_sensors` |
++| 구독 | `/drive/status` | `scout2map_msgs/DriveStatus` | `drive_bridge` |
++| 구독 | `/imu/data` | `sensor_msgs/Imu` | `drive_bridge` (`drive/imu` remap) |
++| 구독 | `/cmd_vel` | `geometry_msgs/Twist` | Nav2 또는 조종 노드 |
++| 구독 | `/control/heartbeat` | `std_msgs/Empty` | 관제 서버 |
++| 구독 | `/threshold/set` | `std_msgs/String` | React 관제 UI |
++| 발행 | `/events` | `std_msgs/String` | 통합 이벤트 |
++| 발행 | `/event/*` | `std_msgs/String` | 종류별 이벤트 |
++
++## 이벤트 8종
++
++최종 보고서가 정의한 8종과 구현 상태의 대응은 다음과 같다.
++
++| 분류 | 보고서 | `type` | 판정 근거 |
++|---|---|---|---|
++| 환경 | 고온 | `HIGH_TEMP` | `EnvSnapshot.temperature_c` |
++| 환경 | 가스 고농도 | `HIGH_GAS` | `EnvSnapshot.tvoc_ppb` |
++| 환경 | 저조도 | `LOW_LIGHT` | `EnvSnapshot.illuminance_lux` |
++| 주행 | 요철 | `ROUGH_TERRAIN` | `Imu.linear_acceleration.z`의 표준편차 |
++| 주행 | 슬립 의심 | `SLIP_SUSPECTED` | `DriveStatus.slip_ratio` |
++| 주행 | 회전 곤란 | `ROTATION_DIFFICULT` | 지령 각속도 대비 실제 yaw rate 비율 |
++| 통신 | 품질 저하 | `COMM_DEGRADED` | heartbeat 경과 시간 |
++| 통신 | 두절 | `COMM_LOST` | heartbeat 경과 시간 |
++
++보고서 8종 외에 확장 2종을 추가로 발행한다.
++
++| `type` | 의미 |
++|---|---|
++| `HIGH_PM25` | PM2.5 농도. PMS7003을 실제로 탑재했으므로 함께 판정한다 |
++| `SENSOR_LINK_LOSS` | Pico 센서 MCU의 USB CDC 링크 두절 |
++
++## 구현 기능
++
++* 8종 + 확장 2종 이벤트 판별
++* `warning` / `danger` 2단계 심각도 판정
++* 이벤트 발생 시점의 SLAM 지도 좌표(`x`, `y`, `yaw`) 결합
++* 시간 기반 debounce로 노이즈 스파이크 억제
++* 위험 해제 시 `cleared` 이벤트 발행
++* 동일 상태에서 이벤트 중복 발행 방지
++* SQLite 기반 임계값 저장과 `/threshold/set` 런타임 변경
++* `/events` 단일 토픽과 `/event/*` 개별 토픽 동시 발행
++* 입력 그룹(환경 / 주행 / 통신) 개별 on/off
+ 
+-임계값은 SQLite에 저장되며, React 관제 UI에서 `/threshold/set` 토픽을 통해 변경할 수 있다.
++## 이벤트 계약
+ 
+-## 현재 구현 기능
++`/events`는 `std_msgs/msg/String`이며 JSON 페이로드를 싣는다.
+ 
+-* `/sensors/env_snapshot` 구독
+-* 고온 이벤트 판별
+-* 가스 고농도 이벤트 판별
+-* 저조도 이벤트 판별
+-* PM2.5 이벤트 판별
+-* 통신 두절 이벤트 판별
+-* 동일 위험 상태에서 이벤트 중복 발행 방지
+-* SQLite 기반 임계값 저장
+-* `/threshold/set` 토픽을 통한 임계값 변경
+-* React 관제 UI에서 임계값 변경 연동
++```json
++{
++  "id": "evt-000012",
++  "type": "HIGH_TEMP",
++  "state": "raised",
++  "level": "warning",
++  "value": 47.38,
++  "threshold": 40.0,
++  "time": 1789234567.891,
++  "sample_time": 1789234567.391,
++  "sample_age_s": 0.5,
++  "source_frame": "sensor_fusion",
++  "frame_id": "map",
++  "x": 1.23,
++  "y": -0.42,
++  "yaw": 0.51,
++  "coordinate_status": "resolved",
++  "map_id": ""
++}
++```
++
++| 필드 | 의미 |
++|---|---|
++| `type` | 위 이벤트 표의 `type` 값 |
++| `state` | `raised` 위험 발생 또는 단계 상승/하강, `cleared` 정상 복귀 |
++| `level` | `warning` 또는 `danger` |
++| `threshold` | 판정에 사용한 임계값. `cleared`와 링크 이벤트는 `null` |
++| `time` | 이벤트를 발행한 ROS 시각 (초) |
++| `sample_time` | 센서값이 취득된 것으로 추정한 시각 (초) |
++| `coordinate_status` | `resolved`, `unresolved`, `disabled` |
++| `map_id` | 좌표가 속한 지도 식별자. 매핑 세션마다 지정한다 |
++
++`coordinate_status`가 `unresolved`이면 `x`, `y`, `yaw`는 `null`이다. TF를 얻지 못했을
++때 최신 위치로 조용히 대체하지 않는다. 잘못된 좌표에 마커를 찍는 것보다 좌표 없이
++적재해 두고 나중에 재처리하는 편이 안전하기 때문이다.
+ 
+-현재 이벤트 토픽은 다음과 같다.
++개별 토픽도 동일한 페이로드를 발행한다.
+ 
+ ```text
+-/event/high_temp
+-/event/high_gas
+-/event/low_light
+-/event/high_pm25
+-/event/link_loss
++/event/high_temp            /event/rough_terrain
++/event/high_gas             /event/slip_suspected
++/event/low_light            /event/rotation_difficult
++/event/high_pm25            /event/comm_degraded
++/event/link_loss            /event/comm_lost
+ ```
+ 
+-## 의존 패키지
++### 링크 3종을 혼동하지 않는다
++
++이름이 비슷한 링크 신호가 셋 있고 서로 대체할 수 없다.
+ 
+-ROS2 Jazzy 환경을 기준으로 개발하였다.
++| 신호 | 의미 | 이벤트 |
++|---|---|---|
++| `EnvSnapshot.link_ok` | Pico 센서 MCU USB CDC 링크 | `SENSOR_LINK_LOSS` |
++| `/drive/link_ok` | STM32 주행 MCU 링크 | 없음, 안전 정지용 |
++| `/control/heartbeat` | 관제망 | `COMM_DEGRADED`, `COMM_LOST` |
+ 
+-필요한 주요 패키지는 다음과 같다.
++보고서의 통신 이벤트 2종은 **관제망 기준**이다. 주행 링크 단절은 이벤트가 아니라 즉시
++안전 정지 대상이므로 `S2M-SBC-Integration`의 `return_home`이 처리한다.
++
++### return_home과의 책임 분담
++
++`return_home` 노드도 `/control/heartbeat`를 구독한다. 중복이 아니라 의도된 설계다.
++
++* **이벤트 엔진**: 마커를 발행한다. 관제 화면에 상태를 보여주는 역할이다.
++* **return_home**: 자동 복귀 또는 안전 정지를 결정한다. 안전 인터록이므로 이 노드가
++  죽어 있어도 독립적으로 동작해야 한다.
++
++두 노드의 timeout을 따로 관리하되, 이벤트 엔진의 `COMM_DEGRADED` 임계값을
++`return_home`의 `heartbeat_timeout_sec`보다 작게 두는 것을 권장한다. 그래야 자동
++복귀가 걸리기 전에 운영자가 품질 저하를 먼저 본다.
++
++## 의존 패키지
++
++ROS2 Jazzy 환경을 기준으로 개발했다.
+ 
+ ```text
+ rclpy
+ std_msgs
++sensor_msgs
++geometry_msgs
++tf2_ros
+ scout2map_msgs
+ ```
+ 
+-`scout2map_msgs`는 `S2M-MCU_Bridge_Node` 레포에 포함되어 있으므로 해당 패키지를 같은 ROS2 워크스페이스에 배치하고 먼저 빌드해야 한다.
++`scout2map_msgs`는 `S2M-MCU-BridgeNode` 레포에 포함되어 있으므로 같은 워크스페이스에
++배치하고 먼저 빌드해야 한다.
+ 
+ ## 워크스페이스 구성 예시
+ 
+ ```text
+ ~/scout2map_ws/
+ └── src/
+-    ├── scout2map-bridge/
++    ├── s2m_mcu_bridge_node/
+     │   ├── scout2map_bridge/
+     │   └── scout2map_msgs/
+     │
+     └── scout2map_event/
+ ```
+ 
+-## 빌드
++`S2M-SBC-Integration`의 `dependencies.repos`를 사용하면 브리지 저장소가 자동으로
++같은 커밋에 맞춰 받아진다.
+ 
+-ROS2 환경을 먼저 등록한다.
++## 빌드
+ 
+ ```bash
+ source /opt/ros/jazzy/setup.bash
+-```
+-
+-워크스페이스 루트에서 빌드한다.
+-
+-```bash
+ cd ~/scout2map_ws
+ colcon build --symlink-install
++source ~/scout2map_ws/install/setup.bash
+ ```
+ 
+-빌드 후 워크스페이스 환경을 등록한다.
++## 실행
++
++### 1. 센서 입력 실행
++
++하드웨어 없이 테스트할 경우 가상 센서를 사용한다.
+ 
+ ```bash
+-source ~/scout2map_ws/install/setup.bash
++ros2 launch scout2map_bridge fake_sensors.launch.py
+ ```
+ 
+-## 실행
++실센서를 사용할 경우 브리지를 실행한다.
+ 
+-### 1. Fake Sensor 실행
++```bash
++ros2 launch scout2map_bridge sensor_bridge.launch.py
++```
+ 
+-실제 센서 하드웨어 없이 테스트할 경우 `S2M-MCU_Bridge_Node`의 fake sensor를 실행한다.
++실차 전체 구성에서는 `S2M-SBC-Integration`의 통합 launch를 사용한다.
+ 
+ ```bash
+-ros2 launch scout2map_bridge fake_sensors.launch.py
++ros2 launch s2m_bringup s2m_onboard_bridge.launch.py
+ ```
+ 
+ ### 2. Event Engine 실행
+ 
+-새 터미널에서 ROS2 환경을 등록한다.
+-
+ ```bash
+-source /opt/ros/jazzy/setup.bash
+-source ~/scout2map_ws/install/setup.bash
++ros2 launch scout2map_event event_engine.launch.py
+ ```
+ 
+-이벤트 엔진을 실행한다.
++파라미터 없이 기본값으로 실행하려면 다음을 사용한다.
+ 
+ ```bash
+ ros2 run scout2map_event event_engine
+@@ -104,173 +206,221 @@
+ 정상 실행 시 다음과 같은 로그가 출력된다.
+ 
+ ```text
+-[event_engine]: event_engine started
++[event_engine]: event_engine started; events on /events, coordinate resolution enabled
+ ```
+ 
+ ### 3. 이벤트 확인
+ 
+-예를 들어 고온 이벤트를 확인하려면 새 터미널에서 다음을 실행한다.
+-
+ ```bash
+-ros2 topic echo /event/high_temp
++ros2 topic echo /events
+ ```
+ 
+-Fake Sensor의 시나리오를 고온 상태로 변경한다.
++가상 센서의 시나리오를 고온 상태로 변경한다.
+ 
+ ```bash
+ ros2 param set /fake_sensors scenario high_temp
+ ```
+ 
+-현재 저장된 온도 임계값을 초과하면 다음과 같은 이벤트가 발행된다.
++임계값을 초과하면 이벤트가 발행된다.
+ 
+ ```text
+-data: '{"type": "HIGH_TEMP", "value": 47.38, "threshold": 45.0}'
++data: '{"id": "evt-000001", "type": "HIGH_TEMP", "state": "raised", "level": "warning", ...}'
+ ```
+ 
+-같은 위험 상태가 계속 유지되는 동안에는 이벤트를 반복 발행하지 않고, 정상 상태로 복귀한 뒤 다시 임계값을 초과할 때 새로운 이벤트를 발행한다.
++같은 단계가 유지되는 동안에는 반복 발행하지 않는다. `danger`로 올라가거나 정상으로
++복귀하면 그때 다시 발행한다.
+ 
+-## 임계값 저장
++## 좌표 결합
+ 
+-임계값은 SQLite에 저장된다.
++좌표는 `map -> base_link` TF에서 얻는다. 따라서 SLAM 또는 AMCL이 실행 중이어야 한다.
++SLAM 없이 실행하면 모든 이벤트가 `coordinate_status: "unresolved"`로 발행된다.
+ 
+-DB 파일 위치:
++센서마다 취득 시각이 다르므로 snapshot 발행 시각을 그대로 쓰지 않고,
++`snapshot.header.stamp - <해당 센서의 age_s>`로 취득 시각을 추정한 뒤 그 시각의 TF를
++조회한다. 설계 근거는 `S2M-SBC-Integration`의
++`docs/integration/map-marker-coordinate-design.md`를 따른다.
+ 
+-```text
+-~/.scout2map/threshold.db
++이 방식은 `age_s`의 양자화와 MCU/ROS 클럭 차이를 포함한 근사다. 센서별 timestamp가
++`EnvSnapshot`에 추가되기 전까지 위치 정확도는 검증된 것으로 보지 않는다.
++
++좌표 결합을 끄려면 다음과 같이 실행한다.
++
++```bash
++ros2 run scout2map_event event_engine --ros-args -p resolve_coordinates:=false
+ ```
+ 
+-기본 이벤트 타입은 다음과 같다.
++## 파라미터
+ 
+-```text
+-HIGH_TEMP
+-HIGH_GAS
+-LOW_LIGHT
+-HIGH_PM25
++전체 목록은 `config/event_engine.yaml`에 주석과 함께 있다. 주요 항목만 옮기면 다음과
++같다.
++
++| 파라미터 | 기본값 | 설명 |
++|---|---|---|
++| `enable_environment_events` | `true` | 환경 3종 + PM2.5 판정 |
++| `enable_drive_events` | `false` | 주행 3종 판정. skid 보정 전에는 끈다 |
++| `enable_comm_events` | `true` | 통신 2종 판정 |
++| `events_topic` | `/events` | 통합 이벤트 토픽 |
++| `publish_per_type_topics` | `true` | 개별 토픽 발행 여부 |
++| `resolve_coordinates` | `true` | 지도 좌표 결합 여부 |
++| `map_frame` / `base_frame` | `map` / `base_link` | 좌표 기준 프레임 |
++| `tf_timeout_s` | `0.2` | TF 조회 대기 시간 |
++| `map_id` | `""` | 지도 식별자 |
++| `publish_clear_events` | `true` | 해제 이벤트 발행 여부 |
++| `rough_window_s` | `1.0` | 요철 판정 가속도 창 길이 |
++| `rotation_min_command_radps` | `0.20` | 회전 곤란 판정 최소 지령 각속도 |
++| `rotation_min_duty_permille` | `300` | 회전 곤란 판정 최소 모터 duty |
++| `require_heartbeat_seen` | `true` | heartbeat 미수신 상태에서 두절 판정 안 함 |
++| `raise_hold_s.<TYPE>` | 0.5~1.5 | 발생 확정까지 유지 시간 |
++| `clear_hold_s.<TYPE>` | 2.0~3.0 | 해제 확정까지 유지 시간 |
++| `threshold_db_path` | `""` | 비우면 `~/.scout2map/threshold.db` |
++
++### debounce
++
++임계값을 한 번 넘었다고 바로 발행하지 않는다. `raise_hold_s` 동안 조건이 유지되어야
++발생으로 확정하고, `clear_hold_s` 동안 조건이 사라져 있어야 해제로 확정한다. 센서
++스파이크 하나로 마커가 생겼다 사라지는 것을 막기 위한 것이다.
++
++### 주행 이벤트를 기본으로 끈 이유
++
++`SLIP_SUSPECTED`는 `DriveStatus.slip_ratio`를 그대로 읽는다. 이 값은 브리지의
++`skid_factor`에 의존하는데 기본값 `1.0`은 **측정되지 않은 값**이다. 4륜 skid steer는
++회전할 때 바퀴가 옆으로 끌리므로, 보정 없이 켜면 의도한 제자리 회전이 전부 슬립으로
++잡힌다.
++
++```bash
++ros2 run scout2map_bridge skid_calib
+ ```
+ 
++측정값을 `drive_bringup`의 `skid_factor`에 넣고 `gyro_bias_radps`도 함께 설정한 뒤
++`enable_drive_events: true`로 바꾼다.
++
++## 임계값
++
++임계값은 `~/.scout2map/threshold.db`에 저장된다. 이벤트 종류와 심각도 단계의 조합이
++키다.
++
++| 이벤트 | 비교 방향 | warning | danger | 단위 |
++|---|---|---|---|---|
++| `HIGH_TEMP` | 초과 | 40.0 | 55.0 | ℃ |
++| `HIGH_GAS` | 초과 | 1000 | 3000 | ppb (TVOC) |
++| `LOW_LIGHT` | 미만 | 50.0 | 10.0 | lux |
++| `HIGH_PM25` | 초과 | 100 | 250 | ug/m3 |
++| `ROUGH_TERRAIN` | 초과 | 2.0 | 4.0 | m/s² (accel z 표준편차) |
++| `SLIP_SUSPECTED` | 초과 | 0.30 | 0.60 | 비율 |
++| `ROTATION_DIFFICULT` | 미만 | 0.50 | 0.25 | 달성/지령 각속도 비율 |
++| `COMM_DEGRADED` | 초과 | 1.5 | - | s (heartbeat 경과) |
++| `COMM_LOST` | 초과 | - | 3.0 | s (heartbeat 경과) |
++
++`LOW_LIGHT`와 `ROTATION_DIFFICULT`는 값이 작을수록 위험하므로 danger 임계값이 warning
++보다 작다.
++
++기본값은 출발점이며 보정값이 아니다. 필드 테스트로 대체해야 한다.
++
++이전 버전의 단일 단계 DB가 이미 있으면 첫 실행 시 자동으로 이관된다. 기존 값은
++`warning` 단계로 보존되고 `danger` 기본값이 추가된다.
++
+ ## 임계값 변경
+ 
+-`/threshold/set` 토픽에 JSON 문자열을 발행하면 임계값을 변경할 수 있다.
++`/threshold/set` 토픽에 JSON 문자열을 발행한다.
+ 
+-예를 들어 고온 임계값을 50℃로 변경하려면 다음과 같이 실행한다.
++```bash
++ros2 topic pub --once /threshold/set std_msgs/msg/String \
++  "{data: '{\"type\":\"HIGH_TEMP\",\"value\":50.0}'}"
++```
++
++`level`을 생략하면 `warning`으로 처리하므로 기존 관제 UI의 페이로드가 그대로 동작한다.
++`danger` 단계를 바꾸려면 명시한다.
+ 
+ ```bash
+-ros2 topic pub --once /threshold/set std_msgs/msg/String "{data: '{\"type\":\"HIGH_TEMP\",\"value\":50.0}'}"
++ros2 topic pub --once /threshold/set std_msgs/msg/String \
++  "{data: '{\"type\":\"HIGH_TEMP\",\"value\":60.0,\"level\":\"danger\"}'}"
+ ```
+ 
+-정상적으로 적용되면 Event Engine 터미널에 다음 로그가 출력된다.
++적용되면 다음 로그가 출력된다.
+ 
+ ```text
+-threshold updated: HIGH_TEMP = 50.0
++threshold updated: HIGH_TEMP/warning = 50.0
+ ```
+ 
+-React 관제 UI에서도 동일한 `/threshold/set` 토픽을 rosbridge를 통해 발행하도록 연결되어 있다.
+-
+ ## React 연동 구조
+ 
+ ```text
+ React
+-  ↓
+-rosbridge WebSocket
+-  ↓
+-/threshold/set
+-  ↓
+-Event Engine
+-  ↓
+-SQLite
++  ↓ rosbridge WebSocket
++/threshold/set  →  Event Engine  →  SQLite
++/events         ←  Event Engine
+ ```
+ 
+-React에서 임계값을 변경하면 Event Engine이 해당 값을 받아 SQLite에 저장하고, 이후 센서 데이터 판별에 새 임계값을 사용한다.
++관제 UI는 `/events` 단일 토픽만 구독하면 된다. `state` 필드로 마커 생성과 제거를,
++`level` 필드로 색상을, `coordinate_status`로 좌표 미확정 표시를 구분한다.
+ 
+-## 현재 테스트 완료 항목
++## 테스트
+ 
+-* Fake Sensor의 `/sensors/env_snapshot` 수신
+-* `high_temp` 시나리오를 이용한 고온 이벤트 발생
+-* SQLite 임계값 저장 및 재조회
+-* SQLite에 저장된 임계값을 기준으로 이벤트 판별
+-* `/threshold/set`을 통한 임계값 변경
+-* React → rosbridge → ROS2 → SQLite 임계값 변경
+-
+-## 현재 미구현 및 진행 중인 부분
++```bash
++python3 -m pytest test/test_threshold_db.py -q
++```
+ 
+-### 1. 시계열 데이터베이스 적재
++임계값 저장, 재조회, v1 스키마 이관, 미등록 키 처리를 ROS 없이 검증한다.
+ 
+-현재 `/sensors/env_snapshot` 데이터는 Event Engine에서 판별에 사용하고 있지만 시계열 DB에는 아직 누적 저장하지 않는다.
++## 미구현 및 진행 중인 부분
+ 
+-향후 온도, 습도, 조도, TVOC, eCO2, PM 데이터를 시간 정보와 함께 시계열 데이터베이스에 저장할 예정이다.
++### 1. 주행 이벤트 실차 보정
+ 
+-### 2. React 이벤트 표시 연동
++세 종류 모두 구현했지만 임계값이 전부 추정값이다. 특히 다음이 필요하다.
+ 
+-현재 Event Engine은 다음과 같이 이벤트별 토픽을 발행한다.
++* `skid_calib` 측정 후 `SLIP_SUSPECTED` 임계값 재조정
++* 실제 요철 구간 주행 rosbag으로 `ROUGH_TERRAIN` 표준편차 분포 확인
++* 카펫, 매끄러운 바닥 등에서 `ROTATION_DIFFICULT` 오검출 여부 확인
+ 
+-```text
+-/event/high_temp
+-/event/high_gas
+-/event/low_light
+-/event/high_pm25
+-/event/link_loss
+-```
++보정 전까지 `enable_drive_events`는 `false`로 둔다.
+ 
+-기존 React 관제 UI는 `/events` 단일 토픽을 구독하는 구조이므로 현재 Event Engine의 이벤트 토픽과 직접 연결되어 있지 않다.
+-
+-향후 다음 두 방식 중 하나로 정리할 필요가 있다.
+-
+-```text
+-1. Event Engine에서 /events 단일 토픽으로 통합 발행
+-2. React에서 /event/* 토픽을 각각 구독
+-```
++### 2. 통신 품질 지표
+ 
+-### 3. 이벤트 위치 좌표
++현재 `COMM_DEGRADED`는 heartbeat 경과 시간만 본다. 실제 품질 저하는 지연 증가나
++손실률로 나타나는 경우가 많으므로, heartbeat 수신 간격의 분산이나 왕복 지연을 추가
++지표로 넣는 편이 낫다.
+ 
+-현재 Event Engine이 발행하는 이벤트 메시지에는 이벤트 타입, 센서값, 임계값만 포함되어 있다.
++### 3. 시계열 데이터베이스 적재
+ 
+-```json
+-{
+-  "type": "HIGH_TEMP",
+-  "value": 47.38,
+-  "threshold": 45.0
+-}
+-```
++`/sensors/env_snapshot` 데이터를 판별에만 쓰고 있으며 시계열로 누적 저장하지 않는다.
++Time-Series AI 노드의 입력이 되려면 필요하다.
+ 
+-지도 마커 표시를 위해 필요한 `x`, `y` 좌표는 아직 연결하지 않았다.
++### 4. `map_id` 자동 주입
+ 
+-SLAM의 현재 로봇 위치와 이벤트 발생 시점을 연결하는 작업이 추가로 필요하다.
++현재 파라미터로 수동 지정한다. 지도 저장 및 재사용 흐름이 확정되면 pose graph 식별자를
++자동으로 채워야 서로 다른 매핑 세션의 이벤트가 섞이지 않는다.
+ 
+-### 4. 센서 상태 예외 처리 검증
++### 5. 미확정 좌표 재처리
+ 
+-Fake Sensor에서 제공하는 다음 시나리오에 대한 추가 검증이 필요하다.
++`coordinate_status: "unresolved"` 이벤트를 나중에 다시 좌표로 해석하는 경로가 없다.
++현재는 로그와 페이로드에만 남는다.
+ 
+-```text
+-warmup
+-sensor_dropout
+-link_loss
+-```
++### 6. 환경 적응 운영 정책
+ 
+-특히 센서 데이터가 유효하지 않은 상태에서 마지막 센서값으로 이벤트가 잘못 발생하지 않도록 `valid`, `age_s` 필드를 기준으로 추가 검증이 필요하다.
++이벤트 발행까지는 완료했으나 이를 받아 주행 속도를 제한하거나 토픽 송출을 차단하는
++정책 노드는 아직 없다. `/events`의 `state`와 `level`을 구독해 구현한다.
+ 
+ ## 현재 구조
+ 
+ ```text
+-fake_sensors / pico_bridge
+-        ↓
+-/sensors/env_snapshot
+-        ↓
+-scout2map_event
+-        ├── SQLite 임계값 조회
+-        ├── 센서 상태 및 임계값 판별
+-        └── /event/* publish
++sensor_bridge / fake_sensors ──> /sensors/env_snapshot ─┐
++drive_bridge ──────────────────> /drive/status ─────────┤
++drive_bridge ──────────────────> /imu/data ─────────────┤
++Nav2 / teleop ─────────────────> /cmd_vel ──────────────┼──> scout2map_event
++관제 서버 ────────────────────> /control/heartbeat ────┘         │
++                                                                  │
++                        ┌─────────────────────────────────────────┤
++                        │ SQLite 임계값 조회 (warning / danger)   │
++                        │ valid 플래그와 게이트 조건 확인          │
++                        │ 시간 기반 debounce                       │
++                        │ map <- base_link TF (취득 추정 시각)     │
++                        └─────────────────────────────────────────┤
++                                                                  v
++                                                    /events, /event/*
+ ```
+ 
+-임계값 변경은 다음과 같다.
++임계값 변경 경로는 다음과 같다.
+ 
+ ```text
+-React
+-   ↓
+-rosbridge
+-   ↓
+-/threshold/set
+-   ↓
+-scout2map_event
+-   ↓
+-threshold.db
++React ──> rosbridge ──> /threshold/set ──> scout2map_event ──> threshold.db
+ ```
+diff -ruN orig-ee/config/event_engine.yaml S2M-Event-Engine/config/event_engine.yaml
+--- orig-ee/config/event_engine.yaml	1970-01-01 00:00:00.000000000 +0000
++++ S2M-Event-Engine/config/event_engine.yaml	2026-08-16 16:25:23.995464687 +0000
+@@ -0,0 +1,79 @@
++event_engine:
++  ros__parameters:
++    # --- input topics ---
++    # Published by scout2map_bridge sensor_bridge, or by fake_sensors
++    env_snapshot_topic: /sensors/env_snapshot
++    # Published by scout2map_bridge drive_bridge
++    drive_status_topic: /drive/status
++    # drive/imu remapped by s2m_onboard_bridge.launch.py
++    imu_topic: /imu/data
++    cmd_vel_topic: /cmd_vel
++    heartbeat_topic: /control/heartbeat
++    threshold_topic: /threshold/set
++
++    # --- output topics ---
++    events_topic: /events
++    event_topic_prefix: /event
++    publish_per_type_topics: true
++
++    # --- source groups ---
++    # Turn a group off when its producer is not running. A disabled group
++    # never raises its events instead of raising them on missing data.
++    enable_environment_events: true
++    # Requires the drive bridge. Leave false until skid_calib has been run,
++    # otherwise every deliberate turn reads as slip.
++    enable_drive_events: false
++    enable_comm_events: true
++
++    # --- coordinates ---
++    # Requires SLAM or AMCL to be publishing map -> odom
++    resolve_coordinates: true
++    map_frame: map
++    base_frame: base_link
++    tf_timeout_s: 0.2
++
++    # Set per mapping run so events from different maps are not mixed on one
++    # coordinate plane. Empty means unidentified.
++    map_id: ""
++
++    # Emit a 'cleared' event when a hazard returns to normal, so the dashboard
++    # can retire the marker and the drive policy can lift its speed limit
++    publish_clear_events: true
++
++    # Empty means ~/.scout2map/threshold.db
++    threshold_db_path: ""
++
++    # --- rough terrain ---
++    rough_window_s: 1.0
++    rough_min_samples: 10
++
++    # --- rotation difficulty ---
++    # Below these the ratio is meaningless: no real turn commanded, or the
++    # motors are not being driven hard enough for a stall to mean anything
++    rotation_min_command_radps: 0.20
++    rotation_min_duty_permille: 300
++    cmd_vel_timeout_s: 0.5
++
++    # --- communication ---
++    # Do not raise COMM_LOST on a bench with no control network attached
++    require_heartbeat_seen: true
++    comm_check_rate_hz: 2.0
++
++    # --- debounce ---
++    # Raise slowly to reject noise, clear slowly to stop markers flickering
++    raise_hold_s:
++      HIGH_TEMP: 1.0
++      HIGH_GAS: 1.0
++      LOW_LIGHT: 1.0
++      HIGH_PM25: 1.0
++      ROUGH_TERRAIN: 0.5
++      SLIP_SUSPECTED: 0.5
++      ROTATION_DIFFICULT: 1.5
++    clear_hold_s:
++      HIGH_TEMP: 3.0
++      HIGH_GAS: 3.0
++      LOW_LIGHT: 3.0
++      HIGH_PM25: 3.0
++      ROUGH_TERRAIN: 3.0
++      SLIP_SUSPECTED: 2.0
++      ROTATION_DIFFICULT: 2.0
+diff -ruN orig-ee/launch/event_engine.launch.py S2M-Event-Engine/launch/event_engine.launch.py
+--- orig-ee/launch/event_engine.launch.py	1970-01-01 00:00:00.000000000 +0000
++++ S2M-Event-Engine/launch/event_engine.launch.py	2026-08-16 15:43:03.727156923 +0000
+@@ -0,0 +1,31 @@
++#!/usr/bin/env python3
++# File   : event_engine.launch.py
++# Purpose: Start the event engine with the shared YAML parameters.
++
++import os
++
++from ament_index_python.packages import get_package_share_directory
++from launch import LaunchDescription
++from launch.actions import DeclareLaunchArgument
++from launch.substitutions import LaunchConfiguration
++from launch_ros.actions import Node
++
++
++def generate_launch_description():
++    pkg_share = get_package_share_directory("scout2map_event")
++    default_params = os.path.join(pkg_share, "config", "event_engine.yaml")
++
++    params_arg = DeclareLaunchArgument(
++        "params_file", default_value=default_params,
++        description="YAML file with event_engine parameters")
++
++    engine = Node(
++        package="scout2map_event",
++        executable="event_engine",
++        name="event_engine",
++        output="screen",
++        emulate_tty=True,
++        parameters=[LaunchConfiguration("params_file")],
++    )
++
++    return LaunchDescription([params_arg, engine])
+diff -ruN orig-ee/package.xml S2M-Event-Engine/package.xml
+--- orig-ee/package.xml	2026-08-16 15:46:01.054385222 +0000
++++ S2M-Event-Engine/package.xml	2026-08-16 16:25:39.337562093 +0000
+@@ -2,14 +2,22 @@
+ <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+ <package format="3">
+   <name>scout2map_event</name>
+-  <version>0.0.0</version>
+-  <description>TODO: Package description</description>
+-  <maintainer email="kw2020202003@todo.todo">kw2020202003</maintainer>
+-  <license>TODO: License declaration</license>
++  <version>0.2.0</version>
++  <description>Threshold event engine for Scout2Map. Converts the sensor fusion
++  snapshot published by scout2map_bridge into levelled hazard events carried on
++  a SLAM map coordinate, and persists operator adjustable thresholds.</description>
++  <maintainer email="chanhee0149@naver.com">chanhee0149</maintainer>
++  <license>Apache-2.0</license>
+ 
+   <depend>rclpy</depend>
+   <depend>scout2map_msgs</depend>
+   <depend>std_msgs</depend>
++  <depend>tf2_ros</depend>
++  <depend>geometry_msgs</depend>
++  <depend>sensor_msgs</depend>
++  <exec_depend>launch</exec_depend>
++  <exec_depend>launch_ros</exec_depend>
++  <exec_depend>ament_index_python</exec_depend>
+ 
+   <test_depend>ament_copyright</test_depend>
+   <test_depend>ament_flake8</test_depend>
+diff -ruN orig-ee/scout2map_event/event_engine_node.py S2M-Event-Engine/scout2map_event/event_engine_node.py
+--- orig-ee/scout2map_event/event_engine_node.py	2026-08-16 15:46:01.054847318 +0000
++++ S2M-Event-Engine/scout2map_event/event_engine_node.py	2026-08-16 16:24:28.289787800 +0000
+@@ -1,191 +1,667 @@
++"""Threshold event engine for Scout2Map.
++
++This node is the ONLY publisher of hazard events. Everything that decides a
++marker should appear on the map goes through here, so thresholds, debounce and
++severity live in one place instead of being spread across the drive stack, the
++bridge and the dashboard.
++
++Inputs, all optional and independently disabled by parameter:
++
++  /sensors/env_snapshot   scout2map_msgs/EnvSnapshot   environment sensors
++  /drive/status           scout2map_msgs/DriveStatus   slip and rotation effort
++  /imu/data               sensor_msgs/Imu              vertical shock
++  /cmd_vel                geometry_msgs/Twist          commanded rotation
++  /control/heartbeat      std_msgs/Empty               control network liveness
++
++Outputs:
++
++  /events        single String topic carrying the full JSON contract, which is
++                 what the React dashboard and the final report specify
++  /event/<type>  one topic per event type, kept so existing debug tooling and
++                 rosbag recipes do not break
++
++Coordinate resolution follows docs/integration/map-marker-coordinate-design.md
++in S2M-SBC-Integration: the sample time is estimated by subtracting the sensor
++group age from the source stamp, and a failed TF lookup is reported as
++unresolved rather than silently replaced with the latest pose.
++
++Note on responsibility: the return_home node in S2M-SBC-Integration also watches
++the heartbeat, but for its own safe-stop decision. That is deliberate. A safety
++interlock must not depend on this node being alive. This node publishes the
++marker; return_home decides whether to stop.
++"""
++
+ import json
++import math
++import statistics
++import time
++from collections import deque
+ 
+ import rclpy
++from geometry_msgs.msg import Twist
++from rclpy.duration import Duration
+ from rclpy.node import Node
+-from std_msgs.msg import String
+-from scout2map_msgs.msg import EnvSnapshot
+-from scout2map_event.threshold_db import ThresholdDB
++from rclpy.time import Time
++from sensor_msgs.msg import Imu
++from std_msgs.msg import Empty, String
++from tf2_ros import Buffer, TransformException, TransformListener
++
++from scout2map_msgs.msg import DriveStatus, EnvSnapshot
++
++from scout2map_event.threshold_db import VALID_LEVELS, ThresholdDB
++
++
++# Direction of the comparison. 'above' means larger readings are worse.
++EVENT_DIRECTION = {
++    'HIGH_TEMP': 'above',
++    'HIGH_GAS': 'above',
++    'HIGH_PM25': 'above',
++    'LOW_LIGHT': 'below',
++    'ROUGH_TERRAIN': 'above',
++    'SLIP_SUSPECTED': 'above',
++    'ROTATION_DIFFICULT': 'below',
++}
++
++# Per-type topic names. The first four match the previous implementation.
++EVENT_TOPIC_SUFFIX = {
++    'HIGH_TEMP': 'high_temp',
++    'HIGH_GAS': 'high_gas',
++    'LOW_LIGHT': 'low_light',
++    'HIGH_PM25': 'high_pm25',
++    'SENSOR_LINK_LOSS': 'link_loss',
++    'ROUGH_TERRAIN': 'rough_terrain',
++    'SLIP_SUSPECTED': 'slip_suspected',
++    'ROTATION_DIFFICULT': 'rotation_difficult',
++    'COMM_DEGRADED': 'comm_degraded',
++    'COMM_LOST': 'comm_lost',
++}
++
++# How long a condition must hold before it is raised, and how long it must be
++# absent before it is retired. Raising slowly rejects sensor noise; clearing
++# slowly stops a marker flickering on a boundary.
++DEFAULT_RAISE_HOLD_S = {
++    'HIGH_TEMP': 1.0,
++    'HIGH_GAS': 1.0,
++    'LOW_LIGHT': 1.0,
++    'HIGH_PM25': 1.0,
++    'ROUGH_TERRAIN': 0.5,
++    'SLIP_SUSPECTED': 0.5,
++    'ROTATION_DIFFICULT': 1.5,
++}
++DEFAULT_CLEAR_HOLD_S = {
++    'HIGH_TEMP': 3.0,
++    'HIGH_GAS': 3.0,
++    'LOW_LIGHT': 3.0,
++    'HIGH_PM25': 3.0,
++    'ROUGH_TERRAIN': 3.0,
++    'SLIP_SUSPECTED': 2.0,
++    'ROTATION_DIFFICULT': 2.0,
++}
++
++
++def quaternion_to_yaw(q):
++    """Yaw only; the chassis is planar so roll and pitch are discarded."""
++    siny = 2.0 * (q.w * q.z + q.x * q.y)
++    cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
++    return math.atan2(siny, cosy)
+ 
+ 
+ class EventEngine(Node):
++    """Turn sensor, drive and link signals into levelled, located events."""
++
+     def __init__(self):
+         super().__init__('event_engine')
+ 
+-        self.threshold_db = ThresholdDB()
+-
+-        self.high_temp_active = False
+-        self.high_gas_active = False
+-        self.low_light_active = False
+-        self.high_pm25_active = False
+-        self.link_loss_active = False
+-
+-        self.sensor_subscription = self.create_subscription(
+-            EnvSnapshot,
+-            '/sensors/env_snapshot',
+-            self.sensor_callback,
+-            10
+-        )
+-
+-        self.threshold_subscription = self.create_subscription(
+-            String,
+-            '/threshold/set',
+-            self.threshold_callback,
+-            10
+-        )
+-
+-        self.high_temp_pub = self.create_publisher(
+-            String,
+-            '/event/high_temp',
+-            10
+-        )
+-
+-        self.high_gas_pub = self.create_publisher(
+-            String,
+-            '/event/high_gas',
+-            10
+-        )
+-
+-        self.low_light_pub = self.create_publisher(
+-            String,
+-            '/event/low_light',
+-            10
+-        )
+-
+-        self.high_pm25_pub = self.create_publisher(
+-            String,
+-            '/event/high_pm25',
+-            10
+-        )
+-
+-        self.link_loss_pub = self.create_publisher(
+-            String,
+-            '/event/link_loss',
+-            10
+-        )
++        # ---------------- topics ----------------
++        self.declare_parameter('env_snapshot_topic', '/sensors/env_snapshot')
++        self.declare_parameter('drive_status_topic', '/drive/status')
++        self.declare_parameter('imu_topic', '/imu/data')
++        self.declare_parameter('cmd_vel_topic', '/cmd_vel')
++        self.declare_parameter('heartbeat_topic', '/control/heartbeat')
++        self.declare_parameter('threshold_topic', '/threshold/set')
++        self.declare_parameter('events_topic', '/events')
++        self.declare_parameter('event_topic_prefix', '/event')
++
++        # ---------------- source enables ----------------
++        # Each group is independent so the node is useful before the whole
++        # stack exists. A disabled group simply never raises its events.
++        self.declare_parameter('enable_environment_events', True)
++        self.declare_parameter('enable_drive_events', True)
++        self.declare_parameter('enable_comm_events', True)
++
++        # Per-type topics are redundant with /events but cheap to keep
++        self.declare_parameter('publish_per_type_topics', True)
++
++        # ---------------- coordinates ----------------
++        self.declare_parameter('resolve_coordinates', True)
++        self.declare_parameter('map_frame', 'map')
++        self.declare_parameter('base_frame', 'base_link')
++        self.declare_parameter('tf_timeout_s', 0.2)
++
++        # Identifies which SLAM map the coordinates belong to. Events from two
++        # different mapping runs must not be mixed on one coordinate plane.
++        self.declare_parameter('map_id', '')
++
++        # Emit a second event when a condition returns to normal, so the
++        # dashboard can retire a marker and the drive policy can lift a limit
++        self.declare_parameter('publish_clear_events', True)
++
++        # Empty string means the default under ~/.scout2map
++        self.declare_parameter('threshold_db_path', '')
++
++        # ---------------- rough terrain ----------------
++        # Vertical acceleration is scored by its spread over a short window,
++        # which removes the gravity offset without needing an orientation.
++        self.declare_parameter('rough_window_s', 1.0)
++        self.declare_parameter('rough_min_samples', 10)
++
++        # ---------------- rotation difficulty ----------------
++        # Only meaningful while a turn is actually being commanded and the
++        # motors are being driven. Otherwise a stationary robot reads as stuck.
++        self.declare_parameter('rotation_min_command_radps', 0.20)
++        self.declare_parameter('rotation_min_duty_permille', 300)
++        self.declare_parameter('cmd_vel_timeout_s', 0.5)
++
++        # ---------------- communication ----------------
++        # Nothing is raised until at least one heartbeat has been seen, so a
++        # bench run with no control network does not sit in permanent COMM_LOST.
++        self.declare_parameter('require_heartbeat_seen', True)
++        self.declare_parameter('comm_check_rate_hz', 2.0)
++
++        # ---------------- debounce ----------------
++        for name, value in DEFAULT_RAISE_HOLD_S.items():
++            self.declare_parameter(f'raise_hold_s.{name}', value)
++        for name, value in DEFAULT_CLEAR_HOLD_S.items():
++            self.declare_parameter(f'clear_hold_s.{name}', value)
++
++        gp = self.get_parameter
++        self._events_topic = str(gp('events_topic').value)
++        self._topic_prefix = str(gp('event_topic_prefix').value).rstrip('/')
++        self._per_type = bool(gp('publish_per_type_topics').value)
++        self._resolve_coords = bool(gp('resolve_coordinates').value)
++        self._map_frame = str(gp('map_frame').value)
++        self._base_frame = str(gp('base_frame').value)
++        self._tf_timeout = float(gp('tf_timeout_s').value)
++        self._map_id = str(gp('map_id').value)
++        self._publish_clear = bool(gp('publish_clear_events').value)
++
++        self._env_enabled = bool(gp('enable_environment_events').value)
++        self._drive_enabled = bool(gp('enable_drive_events').value)
++        self._comm_enabled = bool(gp('enable_comm_events').value)
++
++        self._rough_window = float(gp('rough_window_s').value)
++        self._rough_min_samples = int(gp('rough_min_samples').value)
++        self._rot_min_cmd = float(gp('rotation_min_command_radps').value)
++        self._rot_min_duty = int(gp('rotation_min_duty_permille').value)
++        self._cmd_timeout = float(gp('cmd_vel_timeout_s').value)
++        self._require_hb_seen = bool(gp('require_heartbeat_seen').value)
++
++        self._raise_hold = {
++            name: float(gp(f'raise_hold_s.{name}').value)
++            for name in DEFAULT_RAISE_HOLD_S
++        }
++        self._clear_hold = {
++            name: float(gp(f'clear_hold_s.{name}').value)
++            for name in DEFAULT_CLEAR_HOLD_S
++        }
++
++        db_path = str(gp('threshold_db_path').value) or None
++        self.threshold_db = ThresholdDB(db_path)
++        if self.threshold_db.migrated_from_v1:
++            self.get_logger().info(
++                'threshold database migrated from the single-level schema; '
++                'previous values were kept as warning level')
+ 
+-        self.get_logger().info('event_engine started')
++        # ---------------- state ----------------
++        # Active level per event type, None when the condition is not present
++        self._active = {name: None for name in EVENT_TOPIC_SUFFIX}
++        # Debounce candidate: event type -> (target_level, since_monotonic)
++        self._pending = {}
++        self._event_seq = 0
++
++        self._accel_window = deque()
++        self._cmd_angular = 0.0
++        self._cmd_mono = None
++        self._heartbeat_seen = False
++        self._heartbeat_mono = None
++        self._comm_state = 'ok'
++
++        self._tf_buffer = None
++        self._tf_listener = None
++        if self._resolve_coords:
++            self._tf_buffer = Buffer(node=self)
++            self._tf_listener = TransformListener(self._tf_buffer, self)
++
++        # ---------------- publishers ----------------
++        self._events_pub = self.create_publisher(String, self._events_topic, 10)
++        self._type_pubs = {}
++        if self._per_type:
++            for name, suffix in EVENT_TOPIC_SUFFIX.items():
++                self._type_pubs[name] = self.create_publisher(
++                    String, f'{self._topic_prefix}/{suffix}', 10)
++
++        # ---------------- subscriptions ----------------
++        # QoS: the bridge publishes these RELIABLE with depth 10, so the
++        # default subscription profile matches and no readings are dropped
++        self.create_subscription(
++            String, str(gp('threshold_topic').value),
++            self.threshold_callback, 10)
++
++        if self._env_enabled:
++            self.create_subscription(
++                EnvSnapshot, str(gp('env_snapshot_topic').value),
++                self.sensor_callback, 10)
++
++        if self._drive_enabled:
++            self.create_subscription(
++                DriveStatus, str(gp('drive_status_topic').value),
++                self.drive_callback, 10)
++            self.create_subscription(
++                Imu, str(gp('imu_topic').value), self.imu_callback, 10)
++            self.create_subscription(
++                Twist, str(gp('cmd_vel_topic').value), self.cmd_vel_callback, 10)
++
++        if self._comm_enabled:
++            self.create_subscription(
++                Empty, str(gp('heartbeat_topic').value),
++                self.heartbeat_callback, 10)
++            rate = max(0.1, float(gp('comm_check_rate_hz').value))
++            self.create_timer(1.0 / rate, self._check_comm)
++
++        groups = []
++        if self._env_enabled:
++            groups.append('environment')
++        if self._drive_enabled:
++            groups.append('drive')
++        if self._comm_enabled:
++            groups.append('comm')
++        coords = 'enabled' if self._resolve_coords else 'disabled'
++        self.get_logger().info(
++            f'event_engine started; events on {self._events_topic}, '
++            f'groups [{", ".join(groups) or "none"}], '
++            f'coordinate resolution {coords}')
++
++        if self._drive_enabled:
++            self.get_logger().warn(
++                'slip detection relies on the drive bridge skid_factor. While '
++                'that is left at its unmeasured 1.0 default every deliberate '
++                'turn reads as slip. Run scout2map_bridge skid_calib first, or '
++                'set enable_drive_events to false.')
++
++    # ------------------------------------------------------------------
++    # Threshold updates
++    # ------------------------------------------------------------------
+ 
+     def threshold_callback(self, msg):
+         try:
+             data = json.loads(msg.data)
+-
+             event_type = data['type']
+             value = float(data['value'])
+ 
+-            allowed_types = {
+-                'HIGH_TEMP',
+-                'HIGH_GAS',
+-                'LOW_LIGHT',
+-                'HIGH_PM25'
+-            }
++            # level is optional so the existing dashboard payload still works
++            level = str(data.get('level', 'warning')).lower()
+ 
+-            if event_type not in allowed_types:
++            known = set(EVENT_DIRECTION) | {'COMM_DEGRADED', 'COMM_LOST'}
++            if event_type not in known:
+                 self.get_logger().warning(
+-                    f'unknown threshold type: {event_type}'
+-                )
++                    f'unknown threshold type: {event_type}')
++                return
++            if level not in VALID_LEVELS:
++                self.get_logger().warning(f'unknown threshold level: {level}')
+                 return
+ 
+-            self.threshold_db.set(event_type, value)
+-
++            self.threshold_db.set(event_type, value, level)
+             self.get_logger().info(
+-                f'threshold updated: {event_type} = {value}'
+-            )
+-
+-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+-            self.get_logger().warning(
+-                f'invalid threshold message: {e}'
+-            )
++                f'threshold updated: {event_type}/{level} = {value}')
+ 
+-    def publish_event(self, publisher, event_type, value, threshold):
+-        msg = String()
++        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
++            self.get_logger().warning(f'invalid threshold message: {exc}')
+ 
+-        msg.data = json.dumps({
+-            'type': event_type,
+-            'value': value,
+-            'threshold': threshold
+-        })
+-
+-        publisher.publish(msg)
+-        self.get_logger().info(msg.data)
+-
+-    def sensor_callback(self, msg):
+-        temp_threshold = self.threshold_db.get('HIGH_TEMP')
+-        tvoc_threshold = self.threshold_db.get('HIGH_GAS')
+-        light_threshold = self.threshold_db.get('LOW_LIGHT')
+-        pm25_threshold = self.threshold_db.get('HIGH_PM25')
+-
+-        high_temp = (
+-            msg.ambient_valid and
+-            msg.temperature_c > temp_threshold
+-        )
+-
+-        if high_temp and not self.high_temp_active:
+-            self.publish_event(
+-                self.high_temp_pub,
+-                'HIGH_TEMP',
+-                msg.temperature_c,
+-                temp_threshold
+-            )
++    # ------------------------------------------------------------------
++    # Coordinate resolution
++    # ------------------------------------------------------------------
++
++    def _resolve_pose(self, event_type, stamp, age_s):
++        """Return the pose metadata for an event.
++
++        Never substitutes the latest pose for a missing one: an event whose
++        location cannot be established is marked unresolved so it can be
++        reprocessed later rather than placed on the map at the wrong spot.
++        """
++        pose = {
++            'frame_id': self._map_frame,
++            'x': None,
++            'y': None,
++            'yaw': None,
++            'coordinate_status': 'disabled',
++            'map_id': self._map_id,
++        }
++        if not self._resolve_coords:
++            return pose
+ 
+-        self.high_temp_active = high_temp
++        pose['coordinate_status'] = 'unresolved'
+ 
+-        high_gas = (
+-            msg.air_quality_valid and
+-            msg.ens160_validity == 0 and
+-            msg.tvoc_ppb > tvoc_threshold
+-        )
+-
+-        if high_gas and not self.high_gas_active:
+-            self.publish_event(
+-                self.high_gas_pub,
+-                'HIGH_GAS',
+-                msg.tvoc_ppb,
+-                tvoc_threshold
+-            )
+-
+-        self.high_gas_active = high_gas
+-
+-        low_light = (
+-            msg.illuminance_valid and
+-            msg.illuminance_lux < light_threshold
+-        )
++        source_time = Time.from_msg(stamp) if stamp is not None \
++            else self.get_clock().now()
+ 
+-        if low_light and not self.low_light_active:
+-            self.publish_event(
+-                self.low_light_pub,
+-                'LOW_LIGHT',
+-                msg.illuminance_lux,
+-                light_threshold
+-            )
+-
+-        self.low_light_active = low_light
++        # Approximate when the triggering sample was actually taken. This is an
++        # estimate: age_s is quantised and the MCU clock is not the ROS clock.
++        try:
++            sample_time = source_time - Duration(seconds=max(0.0, age_s))
++        except (ValueError, OverflowError):
++            sample_time = source_time
+ 
+-        high_pm25 = (
+-            msg.particulate_valid and
+-            msg.pm2_5_ug_m3 > pm25_threshold
+-        )
++        pose['sample_time'] = sample_time.nanoseconds / 1e9
++        pose['sample_age_s'] = age_s
+ 
+-        if high_pm25 and not self.high_pm25_active:
+-            self.publish_event(
+-                self.high_pm25_pub,
+-                'HIGH_PM25',
+-                msg.pm2_5_ug_m3,
+-                pm25_threshold
++        try:
++            transform = self._tf_buffer.lookup_transform(
++                self._map_frame,
++                self._base_frame,
++                sample_time,
++                timeout=Duration(seconds=self._tf_timeout),
+             )
++        except TransformException as exc:
++            self.get_logger().warning(
++                f'{event_type}: TF {self._map_frame} <- {self._base_frame} '
++                f'unavailable at sample time ({exc}); event stored unresolved')
++            return pose
++
++        pose['x'] = transform.transform.translation.x
++        pose['y'] = transform.transform.translation.y
++        pose['yaw'] = quaternion_to_yaw(transform.transform.rotation)
++        pose['coordinate_status'] = 'resolved'
++        return pose
++
++    # ------------------------------------------------------------------
++    # Event emission
++    # ------------------------------------------------------------------
++
++    def _publish_event(self, event_type, state, level, value, threshold,
++                       stamp=None, age_s=0.0, source_frame='', extra=None):
++        self._event_seq += 1
+ 
+-        self.high_pm25_active = high_pm25
+-
+-        link_loss = not msg.link_ok
+-
+-        if link_loss and not self.link_loss_active:
+-            self.publish_event(
+-                self.link_loss_pub,
+-                'LINK_LOSS',
+-                1,
+-                0
+-            )
++        payload = {
++            'id': f'evt-{self._event_seq:06d}',
++            'type': event_type,
++            'state': state,
++            'level': level,
++            'value': value,
++            'threshold': threshold,
++            'time': self.get_clock().now().nanoseconds / 1e9,
++            'source_frame': source_frame,
++        }
++        payload.update(self._resolve_pose(event_type, stamp, age_s))
++        if extra:
++            payload.update(extra)
++
++        message = String()
++        message.data = json.dumps(payload)
++
++        self._events_pub.publish(message)
++        publisher = self._type_pubs.get(event_type)
++        if publisher is not None:
++            publisher.publish(message)
++
++        self.get_logger().info(message.data)
++
++    def _target_level(self, event_type, value):
++        """Highest severity whose threshold the value has crossed, or None."""
++        direction = EVENT_DIRECTION[event_type]
++        # Danger first so the more severe level wins
++        for candidate in ('danger', 'warning'):
++            limit = self.threshold_db.get(event_type, candidate)
++            if limit is None:
++                continue
++            crossed = value > limit if direction == 'above' else value < limit
++            if crossed:
++                return candidate, limit
++        return None, None
++
++    def _commit(self, event_type, target, value, threshold, **kwargs):
++        """Apply a debounced level change and publish the transition."""
++        previous = self._active[event_type]
++        if target is None:
++            if previous is not None and self._publish_clear:
++                self._publish_event(
++                    event_type, 'cleared', previous, value, None, **kwargs)
++        else:
++            self._publish_event(
++                event_type, 'raised', target, value, threshold, **kwargs)
++        self._active[event_type] = target
++
++    def _evaluate(self, event_type, valid, value, **kwargs):
++        """Score one reading, debounce it, and emit on a committed change."""
++        if not valid:
++            # An invalid reading is not evidence that the hazard cleared, but
++            # holding a stale marker active forever is worse. Retire it and let
++            # the dashboard show the gap instead of a frozen state.
++            target, threshold = None, None
++        else:
++            target, threshold = self._target_level(event_type, value)
++
++        now = time.monotonic()
++        current = self._active[event_type]
++
++        if target == current:
++            self._pending.pop(event_type, None)
++            return
++
++        candidate, since = self._pending.get(event_type, (None, None))
++        if candidate != target or since is None:
++            self._pending[event_type] = (target, now)
++            return
++
++        required = self._clear_hold.get(event_type, 0.0) if target is None \
++            else self._raise_hold.get(event_type, 0.0)
++        if now - since < required:
++            return
++
++        self._pending.pop(event_type, None)
++        self._commit(event_type, target, value, threshold, **kwargs)
++
++    # ------------------------------------------------------------------
++    # Environment
++    # ------------------------------------------------------------------
++
++    def sensor_callback(self, snapshot):
++        stamp = snapshot.header.stamp
++        frame = snapshot.header.frame_id
++
++        self._evaluate(
++            'HIGH_TEMP', snapshot.ambient_valid,
++            float(snapshot.temperature_c),
++            stamp=stamp, age_s=float(snapshot.ambient_age_s),
++            source_frame=frame)
++
++        # air_quality_valid already means fresh AND ENS160 validity normal, so
++        # the validity byte does not need to be tested a second time here
++        self._evaluate(
++            'HIGH_GAS', snapshot.air_quality_valid,
++            float(snapshot.tvoc_ppb),
++            stamp=stamp, age_s=float(snapshot.air_quality_age_s),
++            source_frame=frame)
++
++        self._evaluate(
++            'LOW_LIGHT', snapshot.illuminance_valid,
++            float(snapshot.illuminance_lux),
++            stamp=stamp, age_s=float(snapshot.illuminance_age_s),
++            source_frame=frame)
++
++        self._evaluate(
++            'HIGH_PM25', snapshot.particulate_valid,
++            float(snapshot.pm2_5_ug_m3),
++            stamp=stamp, age_s=float(snapshot.particulate_age_s),
++            source_frame=frame)
++
++        # This is the Pico serial link, NOT the control network and NOT the
++        # STM32 drive link. Those two are separate signals.
++        self._sensor_link(snapshot)
++
++    def _sensor_link(self, snapshot):
++        event_type = 'SENSOR_LINK_LOSS'
++        lost = not snapshot.link_ok
++        previous = self._active[event_type]
++        frame = snapshot.header.frame_id
++
++        if lost and previous is None:
++            self._publish_event(
++                event_type, 'raised', 'danger', 0.0, None,
++                stamp=snapshot.header.stamp, source_frame=frame)
++            self._active[event_type] = 'danger'
++        elif not lost and previous is not None:
++            if self._publish_clear:
++                self._publish_event(
++                    event_type, 'cleared', previous, 1.0, None,
++                    stamp=snapshot.header.stamp, source_frame=frame)
++            self._active[event_type] = None
++
++    # ------------------------------------------------------------------
++    # Drive
++    # ------------------------------------------------------------------
++
++    def cmd_vel_callback(self, msg):
++        self._cmd_angular = float(msg.angular.z)
++        self._cmd_mono = time.monotonic()
++
++    def imu_callback(self, msg):
++        """Score vertical shock by the spread of accel z over a short window."""
++        now = time.monotonic()
++        self._accel_window.append((now, float(msg.linear_acceleration.z)))
++
++        cutoff = now - self._rough_window
++        while self._accel_window and self._accel_window[0][0] < cutoff:
++            self._accel_window.popleft()
++
++        if len(self._accel_window) < self._rough_min_samples:
++            return
++
++        # Standard deviation removes the gravity offset, so no orientation
++        # estimate is needed to tell a bumpy floor from a tilted one
++        spread = statistics.pstdev([value for _, value in self._accel_window])
++
++        self._evaluate(
++            'ROUGH_TERRAIN', True, spread,
++            stamp=msg.header.stamp, source_frame=msg.header.frame_id)
++
++    def drive_callback(self, msg):
++        frame = msg.header.frame_id
++
++        # --- slip ---
++        # slip_signal_valid is the bridge saying the encoder and IMU yaw rate
++        # estimates are comparable right now. Without it the ratio is noise
++        # divided by noise.
++        self._evaluate(
++            'SLIP_SUSPECTED', bool(msg.slip_signal_valid),
++            float(msg.slip_ratio),
++            stamp=msg.header.stamp, source_frame=frame,
++            extra={
++                'yaw_rate_encoder_radps': float(msg.yaw_rate_encoder_radps),
++                'yaw_rate_imu_radps': float(msg.yaw_rate_imu_radps),
++            })
++
++        # --- rotation difficulty ---
++        self._evaluate_rotation(msg)
++
++    def _evaluate_rotation(self, msg):
++        """Commanded to turn, motors working, chassis not turning."""
++        now = time.monotonic()
++        command_fresh = (
++            self._cmd_mono is not None
++            and now - self._cmd_mono <= self._cmd_timeout
++        )
++        commanded = abs(self._cmd_angular)
++        effort = max(abs(msg.duty_left_permille), abs(msg.duty_right_permille))
++
++        # Every one of these must hold for the ratio to mean anything: a real
++        # turn command, motors actually being driven, and a trustworthy gyro.
++        gated = (
++            command_fresh
++            and commanded >= self._rot_min_cmd
++            and effort >= self._rot_min_duty
++            and msg.imu_ok
++            and msg.motor_enabled
++            and not msg.estop_latched
++        )
++
++        if not gated:
++            self._evaluate(
++                'ROTATION_DIFFICULT', False, 1.0,
++                stamp=msg.header.stamp, source_frame=msg.header.frame_id)
++            return
++
++        achieved = abs(float(msg.yaw_rate_imu_radps))
++        ratio = achieved / commanded if commanded > 0.0 else 1.0
++
++        self._evaluate(
++            'ROTATION_DIFFICULT', True, ratio,
++            stamp=msg.header.stamp, source_frame=msg.header.frame_id,
++            extra={
++                'commanded_yaw_radps': self._cmd_angular,
++                'achieved_yaw_radps': float(msg.yaw_rate_imu_radps),
++                'duty_permille': effort,
++            })
++
++    # ------------------------------------------------------------------
++    # Communication
++    # ------------------------------------------------------------------
++
++    def heartbeat_callback(self, _msg):
++        self._heartbeat_seen = True
++        self._heartbeat_mono = time.monotonic()
++
++    def _check_comm(self):
++        """Grade the control link by heartbeat age.
++
++        DEGRADED and LOST are separate event types rather than two levels of
++        one, because the report counts them separately and the operator acts
++        differently on each. They are mutually exclusive: entering LOST retires
++        DEGRADED so the dashboard never shows both.
++        """
++        if self._require_hb_seen and not self._heartbeat_seen:
++            return
++
++        if self._heartbeat_mono is None:
++            age = float('inf')
++        else:
++            age = time.monotonic() - self._heartbeat_mono
++
++        degraded_limit = self.threshold_db.get('COMM_DEGRADED', 'warning')
++        lost_limit = self.threshold_db.get('COMM_LOST', 'danger')
++        if degraded_limit is None or lost_limit is None:
++            return
++
++        if age >= lost_limit:
++            state = 'lost'
++        elif age >= degraded_limit:
++            state = 'degraded'
++        else:
++            state = 'ok'
++
++        if state == self._comm_state:
++            return
++
++        rounded = None if math.isinf(age) else round(age, 3)
++
++        # Retire whatever was active before moving on
++        if self._comm_state == 'degraded' and self._publish_clear:
++            self._publish_event(
++                'COMM_DEGRADED', 'cleared', 'warning', rounded, None)
++            self._active['COMM_DEGRADED'] = None
++        elif self._comm_state == 'lost' and self._publish_clear:
++            self._publish_event('COMM_LOST', 'cleared', 'danger', rounded, None)
++            self._active['COMM_LOST'] = None
++
++        if state == 'degraded':
++            self._publish_event(
++                'COMM_DEGRADED', 'raised', 'warning', rounded, degraded_limit)
++            self._active['COMM_DEGRADED'] = 'warning'
++        elif state == 'lost':
++            self._publish_event(
++                'COMM_LOST', 'raised', 'danger', rounded, lost_limit)
++            self._active['COMM_LOST'] = 'danger'
+ 
+-        self.link_loss_active = link_loss
++        self._comm_state = state
+ 
+ 
+ def main(args=None):
+@@ -194,12 +670,14 @@
+ 
+     try:
+         rclpy.spin(node)
++    except KeyboardInterrupt:
++        pass
+     finally:
+         node.threshold_db.close()
+         node.destroy_node()
+-        rclpy.shutdown()
++        if rclpy.ok():
++            rclpy.shutdown()
+ 
+ 
+ if __name__ == '__main__':
+     main()
+-
+diff -ruN orig-ee/scout2map_event/threshold_db.py S2M-Event-Engine/scout2map_event/threshold_db.py
+--- orig-ee/scout2map_event/threshold_db.py	2026-08-16 15:46:01.054919072 +0000
++++ S2M-Event-Engine/scout2map_event/threshold_db.py	2026-08-16 16:22:50.702717154 +0000
+@@ -1,77 +1,146 @@
+-import sqlite3
++"""SQLite backed threshold store for the event engine.
++
++Thresholds are keyed by (event_type, level) so one sensor can raise a warning
++and a danger marker from the same reading. The v1 schema had event_type alone
++as the primary key; existing databases are migrated in place on first open.
++"""
++
+ import os
++import sqlite3
++
++
++# Defaults are starting points, not calibrated values. Field testing should
++# replace them and the operator can override any of them at runtime.
++DEFAULT_THRESHOLDS = {
++    # --- environment ---
++    ('HIGH_TEMP', 'warning'): 40.0,          # degC
++    ('HIGH_TEMP', 'danger'): 55.0,
++    ('HIGH_GAS', 'warning'): 1000.0,         # TVOC ppb
++    ('HIGH_GAS', 'danger'): 3000.0,
++    ('LOW_LIGHT', 'warning'): 50.0,          # lux, lower is worse
++    ('LOW_LIGHT', 'danger'): 10.0,
++    ('HIGH_PM25', 'warning'): 100.0,         # ug/m3
++    ('HIGH_PM25', 'danger'): 250.0,
++
++    # --- drive ---
++    # Vertical acceleration standard deviation over the rough terrain window
++    ('ROUGH_TERRAIN', 'warning'): 2.0,       # m/s^2
++    ('ROUGH_TERRAIN', 'danger'): 4.0,
++    # Normalised encoder vs IMU yaw rate discrepancy from DriveStatus
++    ('SLIP_SUSPECTED', 'warning'): 0.30,
++    ('SLIP_SUSPECTED', 'danger'): 0.60,
++    # Achieved yaw rate divided by commanded yaw rate, lower is worse
++    ('ROTATION_DIFFICULT', 'warning'): 0.50,
++    ('ROTATION_DIFFICULT', 'danger'): 0.25,
++
++    # --- communication ---
++    # Age of the newest control heartbeat, in seconds
++    ('COMM_DEGRADED', 'warning'): 1.5,
++    ('COMM_LOST', 'danger'): 3.0,
++}
++
++VALID_LEVELS = ('warning', 'danger')
+ 
+ 
+ class ThresholdDB:
+-    def __init__(self):
+-        db_dir = os.path.expanduser('~/.scout2map')
+-        os.makedirs(db_dir, exist_ok=True)
+-
+-        self.db_path = os.path.join(db_dir, 'threshold.db')
+-
+-        self.conn = sqlite3.connect(
+-            self.db_path,
+-            check_same_thread=False
+-        )
++    """Persist per-event, per-level thresholds across restarts."""
++
++    def __init__(self, db_path=None):
++        if db_path is None:
++            db_dir = os.path.expanduser('~/.scout2map')
++            os.makedirs(db_dir, exist_ok=True)
++            db_path = os.path.join(db_dir, 'threshold.db')
++        else:
++            parent = os.path.dirname(os.path.abspath(db_path))
++            if parent:
++                os.makedirs(parent, exist_ok=True)
+ 
++        self.db_path = db_path
++        self.conn = sqlite3.connect(db_path, check_same_thread=False)
++
++        self.migrated_from_v1 = False
+         self.create_table()
+         self.insert_defaults()
+ 
++    def _columns(self, table):
++        cursor = self.conn.execute(f'PRAGMA table_info({table})')
++        return [row[1] for row in cursor.fetchall()]
++
+     def create_table(self):
++        columns = self._columns('thresholds')
++
++        # v1 schema had no level column; carry its values over as warnings
++        if columns and 'level' not in columns:
++            self.conn.execute('ALTER TABLE thresholds RENAME TO thresholds_v1')
++            self._create_v2()
++            self.conn.execute(
++                '''
++                INSERT OR IGNORE INTO thresholds(event_type, level, value)
++                SELECT event_type, 'warning', value FROM thresholds_v1
++                '''
++            )
++            self.conn.execute('DROP TABLE thresholds_v1')
++            self.conn.commit()
++            self.migrated_from_v1 = True
++            return
++
++        self._create_v2()
++        self.conn.commit()
++
++    def _create_v2(self):
+         self.conn.execute(
+             '''
+             CREATE TABLE IF NOT EXISTS thresholds (
+-                event_type TEXT PRIMARY KEY,
+-                value REAL NOT NULL
++                event_type TEXT NOT NULL,
++                level TEXT NOT NULL,
++                value REAL NOT NULL,
++                PRIMARY KEY (event_type, level)
+             )
+             '''
+         )
+-        self.conn.commit()
+ 
+     def insert_defaults(self):
+-        defaults = {
+-            'HIGH_TEMP': 40.0,
+-            'HIGH_GAS': 1000.0,
+-            'LOW_LIGHT': 50.0,
+-            'HIGH_PM25': 100.0
+-        }
+-
+-        for event_type, value in defaults.items():
++        for (event_type, level), value in DEFAULT_THRESHOLDS.items():
+             self.conn.execute(
+                 '''
+-                INSERT OR IGNORE INTO thresholds(event_type, value)
+-                VALUES (?, ?)
++                INSERT OR IGNORE INTO thresholds(event_type, level, value)
++                VALUES (?, ?, ?)
+                 ''',
+-                (event_type, value)
++                (event_type, level, value),
+             )
+-
+         self.conn.commit()
+ 
+-    def get(self, event_type):
++    def get(self, event_type, level='warning'):
++        """Return the stored threshold, or the built-in default, or None."""
+         cursor = self.conn.execute(
+-            'SELECT value FROM thresholds WHERE event_type = ?',
+-            (event_type,)
++            'SELECT value FROM thresholds WHERE event_type = ? AND level = ?',
++            (event_type, level),
+         )
+-
+         row = cursor.fetchone()
++        if row is not None:
++            return float(row[0])
+ 
+-        if row is None:
+-            return None
++        # Never hand a None back to a comparison; fall back to the default
++        return DEFAULT_THRESHOLDS.get((event_type, level))
+ 
+-        return row[0]
+-
+-    def set(self, event_type, value):
++    def set(self, event_type, value, level='warning'):
+         self.conn.execute(
+             '''
+-            INSERT INTO thresholds(event_type, value)
+-            VALUES (?, ?)
+-            ON CONFLICT(event_type)
++            INSERT INTO thresholds(event_type, level, value)
++            VALUES (?, ?, ?)
++            ON CONFLICT(event_type, level)
+             DO UPDATE SET value = excluded.value
+             ''',
+-            (event_type, value)
++            (event_type, level, float(value)),
+         )
+-
+         self.conn.commit()
+ 
++    def all(self):
++        cursor = self.conn.execute(
++            'SELECT event_type, level, value FROM thresholds '
++            'ORDER BY event_type, level'
++        )
++        return [(row[0], row[1], float(row[2])) for row in cursor.fetchall()]
++
+     def close(self):
+         self.conn.close()
+diff -ruN orig-ee/setup.py S2M-Event-Engine/setup.py
+--- orig-ee/setup.py	2026-08-16 15:46:01.055109335 +0000
++++ S2M-Event-Engine/setup.py	2026-08-16 15:42:52.719852022 +0000
+@@ -1,22 +1,29 @@
++import os
++from glob import glob
++
+ from setuptools import find_packages, setup
+ 
+ package_name = 'scout2map_event'
+ 
+ setup(
+     name=package_name,
+-    version='0.0.0',
++    version='0.2.0',
+     packages=find_packages(exclude=['test']),
+     data_files=[
+         ('share/ament_index/resource_index/packages',
+             ['resource/' + package_name]),
+         ('share/' + package_name, ['package.xml']),
++        (os.path.join('share', package_name, 'launch'),
++            glob('launch/*.launch.py')),
++        (os.path.join('share', package_name, 'config'),
++            glob('config/*.yaml')),
+     ],
+     install_requires=['setuptools'],
+     zip_safe=True,
+-    maintainer='kw2020202003',
+-    maintainer_email='kw2020202003@todo.todo',
+-    description='TODO: Package description',
+-    license='TODO: License declaration',
++    maintainer='chanhee0149',
++    maintainer_email='chanhee0149@naver.com',
++    description='Threshold event engine for Scout2Map.',
++    license='Apache-2.0',
+     extras_require={
+         'test': [
+             'pytest',
+@@ -24,7 +31,7 @@
+     },
+     entry_points={
+         'console_scripts': [
+-		 'event_engine = scout2map_event.event_engine_node:main',
++            'event_engine = scout2map_event.event_engine_node:main',
+         ],
+     },
+ )
+diff -ruN orig-ee/test/test_threshold_db.py S2M-Event-Engine/test/test_threshold_db.py
+--- orig-ee/test/test_threshold_db.py	1970-01-01 00:00:00.000000000 +0000
++++ S2M-Event-Engine/test/test_threshold_db.py	2026-08-16 16:25:34.101790130 +0000
+@@ -0,0 +1,106 @@
++"""Threshold store tests. These need no ROS graph and run under plain pytest."""
++
++import os
++import sqlite3
++import tempfile
++
++from scout2map_event.threshold_db import DEFAULT_THRESHOLDS, ThresholdDB
++
++
++def _tmp_db():
++    return os.path.join(tempfile.mkdtemp(), 'threshold.db')
++
++
++def test_defaults_are_inserted():
++    db = ThresholdDB(_tmp_db())
++    try:
++        assert db.get('HIGH_TEMP') == DEFAULT_THRESHOLDS[('HIGH_TEMP', 'warning')]
++        assert db.get('HIGH_TEMP', 'danger') == DEFAULT_THRESHOLDS[('HIGH_TEMP', 'danger')]
++        assert len(db.all()) == len(DEFAULT_THRESHOLDS)
++    finally:
++        db.close()
++
++
++def test_set_and_get_roundtrip():
++    path = _tmp_db()
++    db = ThresholdDB(path)
++    db.set('HIGH_TEMP', 33.5)
++    db.set('HIGH_TEMP', 44.5, 'danger')
++    db.close()
++
++    reopened = ThresholdDB(path)
++    try:
++        assert reopened.get('HIGH_TEMP') == 33.5
++        assert reopened.get('HIGH_TEMP', 'danger') == 44.5
++    finally:
++        reopened.close()
++
++
++def test_unknown_key_returns_none_not_crash():
++    db = ThresholdDB(_tmp_db())
++    try:
++        # A None here used to reach a > comparison and raise TypeError
++        assert db.get('NO_SUCH_EVENT') is None
++        assert db.get('HIGH_TEMP', 'no_such_level') is None
++    finally:
++        db.close()
++
++
++def test_v1_schema_is_migrated_and_values_kept():
++    path = _tmp_db()
++    os.makedirs(os.path.dirname(path), exist_ok=True)
++
++    conn = sqlite3.connect(path)
++    conn.execute(
++        'CREATE TABLE thresholds (event_type TEXT PRIMARY KEY, value REAL NOT NULL)')
++    conn.execute("INSERT INTO thresholds VALUES ('HIGH_TEMP', 45.0)")
++    conn.commit()
++    conn.close()
++
++    db = ThresholdDB(path)
++    try:
++        assert db.migrated_from_v1 is True
++        assert db.get('HIGH_TEMP') == 45.0
++        assert db.get('HIGH_TEMP', 'danger') is not None
++    finally:
++        db.close()
++
++
++def test_all_eight_report_event_types_have_thresholds():
++    """The report specifies eight events; none may be missing a threshold."""
++    db = ThresholdDB(_tmp_db())
++    try:
++        required = {
++            'HIGH_TEMP': 'warning',
++            'HIGH_GAS': 'warning',
++            'LOW_LIGHT': 'warning',
++            'ROUGH_TERRAIN': 'warning',
++            'SLIP_SUSPECTED': 'warning',
++            'ROTATION_DIFFICULT': 'warning',
++            'COMM_DEGRADED': 'warning',
++            'COMM_LOST': 'danger',
++        }
++        for event_type, level in required.items():
++            assert db.get(event_type, level) is not None, event_type
++    finally:
++        db.close()
++
++
++def test_comm_lost_threshold_exceeds_degraded():
++    """Degraded must trigger before lost or the states are unreachable."""
++    db = ThresholdDB(_tmp_db())
++    try:
++        assert db.get('COMM_LOST', 'danger') > db.get('COMM_DEGRADED', 'warning')
++    finally:
++        db.close()
++
++
++def test_rotation_difficulty_danger_is_below_warning():
++    """ROTATION_DIFFICULT compares downward, so danger is the smaller ratio."""
++    db = ThresholdDB(_tmp_db())
++    try:
++        assert db.get('ROTATION_DIFFICULT', 'danger') < \
++            db.get('ROTATION_DIFFICULT', 'warning')
++        assert db.get('LOW_LIGHT', 'danger') < db.get('LOW_LIGHT', 'warning')
++    finally:
++        db.close()
