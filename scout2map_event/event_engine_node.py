@@ -5,13 +5,14 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from scout2map_msgs.msg import EnvSnapshot
 from scout2map_event.threshold_db import ThresholdDB
-
+from scout2map_event.sensor_history_db import SensorHistoryDB
 
 class EventEngine(Node):
     def __init__(self):
         super().__init__('event_engine')
 
         self.threshold_db = ThresholdDB()
+        self.sensor_db = SensorHistoryDB()
 
         self.high_temp_active = False
         self.high_gas_active = False
@@ -109,6 +110,16 @@ class EventEngine(Node):
         self.get_logger().info(msg.data)
 
     def sensor_callback(self, msg):
+        self.sensor_db.insert_sensor_data(
+                msg.temperature_c,
+                msg.humidity_pct,
+                msg.illuminance_lux,
+                msg.eco2_ppm,
+                msg.tvoc_ppb,
+                msg.aqi,
+                msg.pm2_5_ug_m3
+        )
+
         temp_threshold = self.threshold_db.get('HIGH_TEMP')
         tvoc_threshold = self.threshold_db.get('HIGH_GAS')
         light_threshold = self.threshold_db.get('LOW_LIGHT')
@@ -196,6 +207,7 @@ def main(args=None):
         rclpy.spin(node)
     finally:
         node.threshold_db.close()
+        node.sensor_db.close()
         node.destroy_node()
         rclpy.shutdown()
 

@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
 		 'event_engine = scout2map_event.event_engine_node:main',
+                 'prediction_node = scout2map_event.prediction_node:main',
         ],
     },
 )
