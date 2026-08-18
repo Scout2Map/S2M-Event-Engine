@@ -33,6 +33,7 @@ marker; return_home decides whether to stop.
 
 import json
 import math
+import sqlite3
 import statistics
 import time
 from collections import deque
@@ -130,6 +131,14 @@ class EventEngine(Node):
         self.declare_parameter('publish_clear_events', True)
         self.declare_parameter('threshold_db_path', '')
 
+        # Time series history feeding prediction_node
+        self.declare_parameter('store_sensor_history', True)
+        self.declare_parameter('sensor_history_db_path', '')
+        self.declare_parameter('history_commit_every', 20)
+
+        # 0 keeps everything. 216000 rows is roughly 12 hours at 5Hz.
+        self.declare_parameter('history_retention_rows', 216000)
+
         self.declare_parameter('rough_window_s', 1.0)
         self.declare_parameter('rough_min_samples', 10)
 
@@ -181,7 +190,14 @@ class EventEngine(Node):
 
         db_path = str(gp('threshold_db_path').value) or None
         self.threshold_db = ThresholdDB(db_path)
-        self.sensor_db = SensorHistoryDB()
+        if bool(gp('store_sensor_history').value):
+            self.sensor_db = SensorHistoryDB(
+                db_path=str(gp('sensor_history_db_path').value) or None,
+                commit_every=int(gp('history_commit_every').value),
+                retention_rows=int(gp('history_retention_rows').value),
+            )
+        else:
+            self.sensor_db = None
 
         if self.threshold_db.migrated_from_v1:
             self.get_logger().info(
@@ -639,16 +655,42 @@ class EventEngine(Node):
             **kwargs
         )
 
+    def _store_history(self, snapshot):
+        """Persist only the readings the bridge marked valid.
+
+        Each sensor group has its own validity flag and they fail
+        independently, so the row is assembled per group rather than
+        all-or-nothing. Invalid groups are stored as NULL.
+        """
+        if self.sensor_db is None:
+            return
+
+        ambient = bool(snapshot.ambient_valid)
+        light = bool(snapshot.illuminance_valid)
+        gas = bool(snapshot.air_quality_valid)
+        dust = bool(snapshot.particulate_valid)
+
+        stamp = snapshot.header.stamp
+        stamp_s = stamp.sec + stamp.nanosec / 1e9
+
+        try:
+            self.sensor_db.insert_sensor_data(
+                temperature_c=float(snapshot.temperature_c) if ambient else None,
+                humidity_pct=float(snapshot.humidity_pct) if ambient else None,
+                illuminance_lux=(
+                    float(snapshot.illuminance_lux) if light else None),
+                eco2_ppm=float(snapshot.eco2_ppm) if gas else None,
+                tvoc_ppb=float(snapshot.tvoc_ppb) if gas else None,
+                aqi=int(snapshot.aqi) if gas else None,
+                pm2_5_ug_m3=float(snapshot.pm2_5_ug_m3) if dust else None,
+                stamp_s=stamp_s,
+            )
+        except sqlite3.Error as exc:
+            # History is not worth losing live event detection over
+            self.get_logger().warning(f'sensor history write failed: {exc}')
+
     def sensor_callback(self, snapshot):
-        self.sensor_db.insert_sensor_data(
-            snapshot.temperature_c,
-            snapshot.humidity_pct,
-            snapshot.illuminance_lux,
-            snapshot.eco2_ppm,
-            snapshot.tvoc_ppb,
-            snapshot.aqi,
-            snapshot.pm2_5_ug_m3
-        )
+        self._store_history(snapshot)
 
         stamp = snapshot.header.stamp
         frame = snapshot.header.frame_id
@@ -1016,6 +1058,8 @@ def main(args=None):
 
     finally:
         node.threshold_db.close()
+        if node.sensor_db is not None:
+            node.sensor_db.close()
         node.sensor_db.close()
         node.destroy_node()
 

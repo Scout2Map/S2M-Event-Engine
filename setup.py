@@ -7,7 +7,7 @@ package_name = 'scout2map_event'
 
 setup(
     name=package_name,
-    version='0.2.0',
+    version='1.1.1',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',

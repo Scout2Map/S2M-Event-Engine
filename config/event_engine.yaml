@@ -43,6 +43,20 @@ event_engine:
     # Empty means ~/.scout2map/threshold.db
     threshold_db_path: ""
 
+    # --- sensor history ---
+    # Time series feed for prediction_node. Only readings whose validity flag
+    # is set are stored; a warming-up gas sensor would otherwise train the
+    # model on values that were never measured.
+    store_sensor_history: true
+    sensor_history_db_path: ""
+
+    # Snapshots arrive at 5Hz; committing every row means five fsyncs a second
+    # inside a realtime callback
+    history_commit_every: 20
+
+    # 0 keeps everything. 216000 rows is roughly 12 hours at 5Hz.
+    history_retention_rows: 216000
+
     # --- rough terrain ---
     rough_window_s: 1.0
     rough_min_samples: 10

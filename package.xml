@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>scout2map_event</name>
-  <version>0.2.0</version>
+  <version>1.1.1</version>
   <description>Threshold event engine for Scout2Map. Converts the sensor fusion
   snapshot published by scout2map_bridge into levelled hazard events carried on
   a SLAM map coordinate, and persists operator adjustable thresholds.</description>
