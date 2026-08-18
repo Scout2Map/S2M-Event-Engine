@@ -43,6 +43,22 @@ event_engine:
     # Empty means ~/.scout2map/threshold.db
     threshold_db_path: ""
 
+    # --- ENS160 warm-up policy ---
+    # The bridge sets air_quality_valid only at validity 0. After a cold boot
+    # the datasheet allows up to an hour at validity 2 (initial start-up),
+    # during which this node would otherwise say nothing about gas at all.
+    #   0 = only fully settled readings drive events
+    #   1 = warm-up readings also count (default)
+    gas_accept_validity: 1
+
+    # Freshness is normally implied by air_quality_valid; bypassing that flag
+    # means checking the age directly
+    gas_max_age_s: 5.0
+
+    # Marks areas where gas sensing was unavailable, so the map can separate
+    # "no hazard here" from "not measured here"
+    publish_gas_warmup_event: true
+
     # --- sensor history ---
     # Time series feed for prediction_node. Only readings whose validity flag
     # is set are stored; a warming-up gas sensor would otherwise train the
@@ -56,6 +72,10 @@ event_engine:
 
     # 0 keeps everything. 216000 rows is roughly 12 hours at 5Hz.
     history_retention_rows: 216000
+
+    # Gas rows are stored up to this validity and the value is recorded in the
+    # ens160_validity column, so later analysis can filter on quality
+    gas_history_accept_validity: 1
 
     # --- rough terrain ---
     rough_window_s: 1.0

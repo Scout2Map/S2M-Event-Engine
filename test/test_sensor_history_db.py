@@ -113,3 +113,27 @@ def test_v1_schema_gains_the_new_columns():
         assert rows[-1][2] == 31.0
     finally:
         db.close()
+
+
+def test_validity_is_stored_with_the_gas_reading():
+    """Analysis needs to know how settled the sensor was for each row."""
+    db = SensorHistoryDB(_tmp_db(), commit_every=1)
+    try:
+        db.insert_sensor_data(
+            temperature_c=25.0, eco2_ppm=454.0, tvoc_ppb=49.0,
+            ens160_validity=1, stamp_s=1.0)
+        row = db.get_recent_data(1)[0]
+        assert row[5] == 454.0
+        assert row[9] == 1
+    finally:
+        db.close()
+
+
+def test_validity_alone_does_not_create_a_row():
+    """It is metadata, not a measurement."""
+    db = SensorHistoryDB(_tmp_db(), commit_every=1)
+    try:
+        assert db.insert_sensor_data(ens160_validity=2, stamp_s=1.0) is False
+        assert db.row_count() == 0
+    finally:
+        db.close()

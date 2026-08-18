@@ -69,6 +69,7 @@ EVENT_TOPIC_SUFFIX = {
     'LOW_LIGHT': 'low_light',
     'HIGH_PM25': 'high_pm25',
     'SENSOR_LINK_LOSS': 'link_loss',
+    'GAS_SENSOR_WARMUP': 'gas_warmup',
     'ROUGH_TERRAIN': 'rough_terrain',
     'SLIP_SUSPECTED': 'slip_suspected',
     'ROTATION_DIFFICULT': 'rotation_difficult',
@@ -131,6 +132,23 @@ class EventEngine(Node):
         self.declare_parameter('publish_clear_events', True)
         self.declare_parameter('threshold_db_path', '')
 
+        # --- ENS160 warm-up policy ---
+        # The bridge sets air_quality_valid only at validity 0. The datasheet
+        # allows up to an hour in validity 2 (initial start-up) after a cold
+        # boot, during which this node would otherwise be silent about gas.
+        # validity 1 is warm-up: readings are usable but not yet specified.
+        #   0 = accept only fully settled readings
+        #   1 = also accept warm-up (default)
+        self.declare_parameter('gas_accept_validity', 1)
+
+        # Freshness is normally implied by air_quality_valid. Bypassing that
+        # flag means checking the age directly.
+        self.declare_parameter('gas_max_age_s', 5.0)
+
+        # Raise a marker while gas sensing is unavailable, so the operator can
+        # tell "no hazard here" apart from "not measured here"
+        self.declare_parameter('publish_gas_warmup_event', True)
+
         # Time series history feeding prediction_node
         self.declare_parameter('store_sensor_history', True)
         self.declare_parameter('sensor_history_db_path', '')
@@ -138,6 +156,10 @@ class EventEngine(Node):
 
         # 0 keeps everything. 216000 rows is roughly 12 hours at 5Hz.
         self.declare_parameter('history_retention_rows', 216000)
+
+        # Gas rows are stored up to this validity and the value is recorded
+        # alongside, so later analysis can filter on measurement quality.
+        self.declare_parameter('gas_history_accept_validity', 1)
 
         self.declare_parameter('rough_window_s', 1.0)
         self.declare_parameter('rough_min_samples', 10)
@@ -177,6 +199,11 @@ class EventEngine(Node):
         self._rot_min_duty = int(gp('rotation_min_duty_permille').value)
         self._cmd_timeout = float(gp('cmd_vel_timeout_s').value)
         self._require_hb_seen = bool(gp('require_heartbeat_seen').value)
+        self._gas_accept_validity = int(gp('gas_accept_validity').value)
+        self._gas_max_age = float(gp('gas_max_age_s').value)
+        self._warmup_event = bool(gp('publish_gas_warmup_event').value)
+        self._gas_history_validity = int(
+            gp('gas_history_accept_validity').value)
 
         self._raise_hold = {
             name: float(gp(f'raise_hold_s.{name}').value)
@@ -667,7 +694,11 @@ class EventEngine(Node):
 
         ambient = bool(snapshot.ambient_valid)
         light = bool(snapshot.illuminance_valid)
-        gas = bool(snapshot.air_quality_valid)
+        validity = int(snapshot.ens160_validity)
+        gas = (
+            float(snapshot.air_quality_age_s) <= self._gas_max_age
+            and validity <= self._gas_history_validity
+        )
         dust = bool(snapshot.particulate_valid)
 
         stamp = snapshot.header.stamp
@@ -683,6 +714,7 @@ class EventEngine(Node):
                 tvoc_ppb=float(snapshot.tvoc_ppb) if gas else None,
                 aqi=int(snapshot.aqi) if gas else None,
                 pm2_5_ug_m3=float(snapshot.pm2_5_ug_m3) if dust else None,
+                ens160_validity=validity if gas else None,
                 stamp_s=stamp_s,
             )
         except sqlite3.Error as exc:
@@ -706,15 +738,19 @@ class EventEngine(Node):
             source_frame=frame
         )
 
+        # air_quality_valid is true only at ENS160 validity 0. A cold sensor
+        # can sit at validity 2 for up to an hour, so the acceptance policy is
+        # applied here rather than deferring to that flag.
         self._evaluate(
             'HIGH_GAS',
-            snapshot.air_quality_valid,
+            self._gas_usable(snapshot),
             float(snapshot.tvoc_ppb),
             stamp=stamp,
             age_s=float(
                 snapshot.air_quality_age_s
             ),
-            source_frame=frame
+            source_frame=frame,
+            extra={'ens160_validity': int(snapshot.ens160_validity)}
         )
 
         self._evaluate(
@@ -739,7 +775,51 @@ class EventEngine(Node):
             source_frame=frame
         )
 
+        self._gas_warmup(snapshot)
         self._sensor_link(snapshot)
+
+    def _gas_usable(self, snapshot):
+        """Whether the ENS160 reading may drive an event right now.
+
+        air_quality_valid is deliberately not used: it is true only at
+        validity 0. Bypassing it also bypasses the staleness test folded into
+        it, so freshness is checked explicitly.
+        """
+        if float(snapshot.air_quality_age_s) > self._gas_max_age:
+            return False
+        return int(snapshot.ens160_validity) <= self._gas_accept_validity
+
+    def _gas_warmup(self, snapshot):
+        """Mark where gas sensing was unavailable.
+
+        Without this the map cannot separate an area with no gas hazard from
+        an area the sensor could not yet measure. On a recon run that
+        difference matters as much as the reading itself.
+        """
+        if not self._warmup_event:
+            return
+
+        event_type = 'GAS_SENSOR_WARMUP'
+        validity = int(snapshot.ens160_validity)
+        warming = validity > self._gas_accept_validity
+        previous = self._active[event_type]
+
+        if warming and previous is None:
+            self._publish_event(
+                event_type, 'raised', 'warning', validity, None,
+                stamp=snapshot.header.stamp,
+                source_frame=snapshot.header.frame_id,
+                extra={'ens160_validity': validity,
+                       'reason': 'ENS160 initial start-up'})
+            self._active[event_type] = 'warning'
+        elif not warming and previous is not None:
+            if self._publish_clear:
+                self._publish_event(
+                    event_type, 'cleared', previous, validity, None,
+                    stamp=snapshot.header.stamp,
+                    source_frame=snapshot.header.frame_id,
+                    extra={'ens160_validity': validity})
+            self._active[event_type] = None
 
     def _sensor_link(self, snapshot):
         event_type = 'SENSOR_LINK_LOSS'

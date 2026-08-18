@@ -41,6 +41,34 @@ Scout2Map UGV의 센서 데이터를 기반으로 임계값을 판별하고 이�
 |---|---|
 | `HIGH_PM25` | PM2.5 농도. PMS7003을 실제로 탑재했으므로 함께 판정한다 |
 | `SENSOR_LINK_LOSS` | Pico 센서 MCU의 USB CDC 링크 두절 |
+| `GAS_SENSOR_WARMUP` | ENS160이 아직 측정 가능한 상태가 아님 |
+
+### ENS160 워밍업 처리
+
+ENS160은 전원 인가 후 상태 코드(`validity`)가 단계적으로 내려간다.
+
+| validity | 의미 | 기본 정책 |
+|---|---|---|
+| 0 | 정상 동작 | 가스 이벤트 판정 |
+| 1 | 워밍업 (약 3분) | 가스 이벤트 판정 |
+| 2 | 초기 시동 (**최대 1시간**) | 판정 제외, `GAS_SENSOR_WARMUP` 발행 |
+| 3 | 무효 출력 | 판정 제외, `GAS_SENSOR_WARMUP` 발행 |
+
+브리지의 `air_quality_valid`는 validity 0에서만 참이다. 그 값을 그대로 쓰면 냉시동
+후 최대 한 시간 동안 가스에 관해 아무 신호도 나가지 않는다. 이 노드는
+`ens160_validity`를 직접 읽어 `gas_accept_validity`(기본 1)까지 허용한다.
+
+판정에서 제외되는 동안에는 `GAS_SENSOR_WARMUP` 마커를 발행한다. 이것이 없으면 지도
+위에서 **가스가 없는 구역과 가스를 측정하지 못한 구역이 구분되지 않는다.** 정찰
+임무에서는 이 차이가 측정값 자체만큼 중요하다.
+
+`air_quality_valid`를 우회하므로 신선도는 `gas_max_age_s`로 별도 확인한다.
+
+엄격하게 운용하려면 다음과 같이 설정한다.
+
+```yaml
+gas_accept_validity: 0
+```
 
 ## 구현 기능
 

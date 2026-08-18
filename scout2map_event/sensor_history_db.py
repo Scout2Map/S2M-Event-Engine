@@ -56,7 +56,8 @@ class SensorHistoryDB:
                 eco2_ppm REAL,
                 tvoc_ppb REAL,
                 aqi INTEGER,
-                pm2_5_ug_m3 REAL
+                pm2_5_ug_m3 REAL,
+                ens160_validity INTEGER
             )
             """
         )
@@ -75,6 +76,7 @@ class SensorHistoryDB:
             ('tvoc_ppb', 'REAL'),
             ('aqi', 'INTEGER'),
             ('pm2_5_ug_m3', 'REAL'),
+            ('ens160_validity', 'INTEGER'),
         ):
             if column not in columns:
                 self.cursor.execute(
@@ -97,6 +99,7 @@ class SensorHistoryDB:
         tvoc_ppb=None,
         aqi=None,
         pm2_5_ug_m3=None,
+        ens160_validity=None,
         stamp_s=None,
     ):
         """Store one row. Pass None for any sensor whose reading was invalid.
@@ -108,6 +111,8 @@ class SensorHistoryDB:
             temperature_c, humidity_pct, illuminance_lux,
             eco2_ppm, tvoc_ppb, aqi, pm2_5_ug_m3,
         )
+        # ens160_validity is metadata about the gas reading, not a reading of
+        # its own, so it does not keep an otherwise empty row alive
         if all(value is None for value in values):
             return False
 
@@ -117,11 +122,12 @@ class SensorHistoryDB:
             """
             INSERT INTO sensor_history (
                 timestamp, stamp_s, temperature_c, humidity_pct,
-                illuminance_lux, eco2_ppm, tvoc_ppb, aqi, pm2_5_ug_m3
+                illuminance_lux, eco2_ppm, tvoc_ppb, aqi, pm2_5_ug_m3,
+                ens160_validity
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (timestamp, stamp_s) + values,
+            (timestamp, stamp_s) + values + (ens160_validity,),
         )
 
         self._pending_writes += 1
@@ -145,7 +151,8 @@ class SensorHistoryDB:
         self.cursor.execute(
             """
             SELECT timestamp, stamp_s, temperature_c, humidity_pct,
-                   illuminance_lux, eco2_ppm, tvoc_ppb, aqi, pm2_5_ug_m3
+                   illuminance_lux, eco2_ppm, tvoc_ppb, aqi, pm2_5_ug_m3,
+                   ens160_validity
             FROM sensor_history
             ORDER BY id DESC
             LIMIT ?
