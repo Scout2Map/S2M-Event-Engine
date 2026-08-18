@@ -2,14 +2,22 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>scout2map_event</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="kw2020202003@todo.todo">kw2020202003</maintainer>
-  <license>TODO: License declaration</license>
+  <version>0.2.0</version>
+  <description>Threshold event engine for Scout2Map. Converts the sensor fusion
+  snapshot published by scout2map_bridge into levelled hazard events carried on
+  a SLAM map coordinate, and persists operator adjustable thresholds.</description>
+  <maintainer email="chanhee0149@naver.com">chanhee0149</maintainer>
+  <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>scout2map_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

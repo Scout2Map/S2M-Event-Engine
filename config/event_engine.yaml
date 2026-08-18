@@ -1,0 +1,79 @@
+event_engine:
+  ros__parameters:
+    # --- input topics ---
+    # Published by scout2map_bridge sensor_bridge, or by fake_sensors
+    env_snapshot_topic: /sensors/env_snapshot
+    # Published by scout2map_bridge drive_bridge
+    drive_status_topic: /drive/status
+    # drive/imu remapped by s2m_onboard_bridge.launch.py
+    imu_topic: /imu/data
+    cmd_vel_topic: /cmd_vel
+    heartbeat_topic: /control/heartbeat
+    threshold_topic: /threshold/set
+
+    # --- output topics ---
+    events_topic: /events
+    event_topic_prefix: /event
+    publish_per_type_topics: true
+
+    # --- source groups ---
+    # Turn a group off when its producer is not running. A disabled group
+    # never raises its events instead of raising them on missing data.
+    enable_environment_events: true
+    # Requires the drive bridge. Leave false until skid_calib has been run,
+    # otherwise every deliberate turn reads as slip.
+    enable_drive_events: false
+    enable_comm_events: true
+
+    # --- coordinates ---
+    # Requires SLAM or AMCL to be publishing map -> odom
+    resolve_coordinates: true
+    map_frame: map
+    base_frame: base_link
+    tf_timeout_s: 0.2
+
+    # Set per mapping run so events from different maps are not mixed on one
+    # coordinate plane. Empty means unidentified.
+    map_id: ""
+
+    # Emit a 'cleared' event when a hazard returns to normal, so the dashboard
+    # can retire the marker and the drive policy can lift its speed limit
+    publish_clear_events: true
+
+    # Empty means ~/.scout2map/threshold.db
+    threshold_db_path: ""
+
+    # --- rough terrain ---
+    rough_window_s: 1.0
+    rough_min_samples: 10
+
+    # --- rotation difficulty ---
+    # Below these the ratio is meaningless: no real turn commanded, or the
+    # motors are not being driven hard enough for a stall to mean anything
+    rotation_min_command_radps: 0.20
+    rotation_min_duty_permille: 300
+    cmd_vel_timeout_s: 0.5
+
+    # --- communication ---
+    # Do not raise COMM_LOST on a bench with no control network attached
+    require_heartbeat_seen: true
+    comm_check_rate_hz: 2.0
+
+    # --- debounce ---
+    # Raise slowly to reject noise, clear slowly to stop markers flickering
+    raise_hold_s:
+      HIGH_TEMP: 1.0
+      HIGH_GAS: 1.0
+      LOW_LIGHT: 1.0
+      HIGH_PM25: 1.0
+      ROUGH_TERRAIN: 0.5
+      SLIP_SUSPECTED: 0.5
+      ROTATION_DIFFICULT: 1.5
+    clear_hold_s:
+      HIGH_TEMP: 3.0
+      HIGH_GAS: 3.0
+      LOW_LIGHT: 3.0
+      HIGH_PM25: 3.0
+      ROUGH_TERRAIN: 3.0
+      SLIP_SUSPECTED: 2.0
+      ROTATION_DIFFICULT: 2.0
