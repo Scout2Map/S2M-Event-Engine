@@ -168,7 +168,19 @@ class SensorHistoryDB:
         return int(self.cursor.fetchone()[0])
 
     def close(self):
+        """Commit what is buffered and close. Safe to call more than once.
+
+        Errors here are swallowed on purpose: close runs during shutdown,
+        often while another exception is already propagating, and a failure
+        to flush history must not replace the traceback that explains why the
+        node is shutting down in the first place.
+        """
         try:
             self.flush()
+        except sqlite3.Error:
+            pass
         finally:
-            self.conn.close()
+            try:
+                self.conn.close()
+            except sqlite3.Error:
+                pass

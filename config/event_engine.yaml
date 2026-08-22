@@ -81,6 +81,15 @@ event_engine:
     rough_window_s: 1.0
     rough_min_samples: 10
 
+    # A skid steer drags all four wheels sideways when it turns, shaking the
+    # chassis far harder than any floor does. Measured on this robot: driving
+    # straight gives a p90 spread of 0.25 m/s^2, turning in place gives 3.1 to
+    # 3.6. Terrain is judged only when the yaw command is below this.
+    rough_max_yaw_cmd_radps: 0.15
+
+    # The chassis keeps ringing after a turn ends, so wait before judging again
+    rough_settle_after_turn_s: 1.0
+
     # --- rotation difficulty ---
     # Below these the ratio is meaningless: no real turn commanded, or the
     # motors are not being driven hard enough for a stall to mean anything

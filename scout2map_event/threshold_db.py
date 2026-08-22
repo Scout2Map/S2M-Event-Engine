@@ -23,9 +23,15 @@ DEFAULT_THRESHOLDS = {
     ('HIGH_PM25', 'danger'): 250.0,
 
     # --- drive ---
-    # Vertical acceleration standard deviation over the rough terrain window
-    ('ROUGH_TERRAIN', 'warning'): 2.0,       # m/s^2
-    ('ROUGH_TERRAIN', 'danger'): 4.0,
+    # Vertical acceleration standard deviation over the rough terrain window.
+    # Measured 2026-08-22 on the assembled chassis, flat indoor floor, driving
+    # straight only (185 one-second windows):
+    #   median 0.036   p90 0.254   max 25.4 (the max is the start/stop jerk)
+    # Turning in place on the same floor gives 3.1 to 3.6, which is why the
+    # engine gates this event on yaw command rather than raising the limits.
+    # Re-measure after changing wheels, load or the IMU mount.
+    ('ROUGH_TERRAIN', 'warning'): 1.0,       # m/s^2, ~4x the straight-line p90
+    ('ROUGH_TERRAIN', 'danger'): 3.0,
     # Normalised encoder vs IMU yaw rate discrepancy from DriveStatus
     ('SLIP_SUSPECTED', 'warning'): 0.30,
     ('SLIP_SUSPECTED', 'danger'): 0.60,
